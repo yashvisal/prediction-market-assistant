@@ -1,0 +1,103 @@
+"use client"
+
+import { useRouter, useSearchParams } from "next/navigation"
+import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { UnfoldMoreIcon, Tick02Icon } from "@hugeicons/core-free-icons"
+import type { MarketStatus, MarketCategory } from "@/lib/market-types"
+
+const statuses: { value: MarketStatus | "all"; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "open", label: "Open" },
+  { value: "resolved", label: "Resolved" },
+]
+
+const categories: { value: MarketCategory | "all"; label: string }[] = [
+  { value: "all", label: "All categories" },
+  { value: "finance", label: "Finance" },
+  { value: "technology", label: "Technology" },
+  { value: "crypto", label: "Crypto" },
+  { value: "science", label: "Science" },
+  { value: "geopolitics", label: "Geopolitics" },
+  { value: "politics", label: "Politics" },
+  { value: "climate", label: "Climate" },
+]
+
+export function MarketFilters() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const activeStatus = searchParams.get("status") ?? "all"
+  const activeCategory = searchParams.get("category") ?? "all"
+  const activeCategoryLabel =
+    categories.find((c) => c.value === activeCategory)?.label ?? "All categories"
+
+  function setFilter(key: string, value: string) {
+    const params = new URLSearchParams(searchParams.toString())
+    if (value === "all") {
+      params.delete(key)
+    } else {
+      params.set(key, value)
+    }
+    router.push(`/markets${params.size > 0 ? `?${params.toString()}` : ""}`)
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <div className="flex items-center gap-1">
+        {statuses.map((s) => (
+          <Button
+            key={s.value}
+            variant={activeStatus === s.value ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => setFilter("status", s.value)}
+          >
+            {s.label}
+          </Button>
+        ))}
+      </div>
+
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          className={cn(
+            "inline-flex h-7 items-center gap-1.5 rounded-[min(var(--radius-md),10px)] border border-input bg-transparent px-2.5 text-[0.8rem] whitespace-nowrap transition-colors outline-none select-none hover:bg-accent focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
+            activeCategory !== "all"
+              ? "text-foreground"
+              : "text-muted-foreground"
+          )}
+        >
+          {activeCategoryLabel}
+          <HugeiconsIcon
+            icon={UnfoldMoreIcon}
+            strokeWidth={2}
+            className="size-3.5 text-muted-foreground"
+          />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-40">
+          {categories.map((c) => (
+            <DropdownMenuItem
+              key={c.value}
+              onClick={() => setFilter("category", c.value)}
+              className="flex items-center justify-between gap-3"
+            >
+              {c.label}
+              {activeCategory === c.value && (
+                <HugeiconsIcon
+                  icon={Tick02Icon}
+                  strokeWidth={2}
+                  className="size-3.5 text-foreground"
+                />
+              )}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  )
+}
