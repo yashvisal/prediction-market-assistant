@@ -1,4 +1,3 @@
-import { Suspense } from "react"
 import { getMarkets } from "@/lib/mock-data"
 import { MarketCard } from "@/components/markets/market-card"
 import { MarketFilters } from "@/components/markets/market-filters"
@@ -55,9 +54,7 @@ export default async function MarketsPage({ searchParams }: Props) {
         </p>
       </div>
 
-      <Suspense>
-        <MarketFilters />
-      </Suspense>
+      <MarketFilters />
 
       {markets.length === 0 ? (
         <div className="py-12 text-center">
