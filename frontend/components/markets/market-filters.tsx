@@ -66,17 +66,14 @@ export function MarketFilters() {
       <DropdownMenu>
         <DropdownMenuTrigger
           className={cn(
-            "inline-flex h-7 items-center gap-1.5 rounded-[min(var(--radius-md),10px)] border border-input bg-transparent px-2.5 text-[0.8rem] whitespace-nowrap transition-colors outline-none select-none hover:bg-accent focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
-            activeCategory !== "all"
-              ? "text-foreground"
-              : "text-muted-foreground"
+            "inline-flex h-7 items-center gap-1.5 rounded-[min(var(--radius-md),10px)] border border-input bg-transparent px-2.5 text-[0.8rem] whitespace-nowrap text-foreground transition-colors outline-none select-none hover:bg-accent focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
           )}
         >
           {activeCategoryLabel}
           <HugeiconsIcon
             icon={UnfoldMoreIcon}
             strokeWidth={2}
-            className="size-3.5 text-muted-foreground"
+            className="size-3.5 text-foreground"
           />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="min-w-40">
