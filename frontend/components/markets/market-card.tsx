@@ -1,24 +1,28 @@
 import Link from "next/link"
-import type { Market } from "@/lib/market-types"
+import type { MarketSummary } from "@/lib/market-types"
+import {
+  getMovementDirectionLabel,
+  getMovementDirectionSymbol,
+  getMovementMeta,
+  getResolvedProbability,
+} from "@/lib/domain/markets"
 import { formatProbability, formatVolume, formatMovement } from "@/lib/formatters"
 import { cn } from "@/lib/utils"
 
-export function MarketCard({ market }: { market: Market }) {
-  const movement = market.currentProbability - market.previousClose
-  const direction = movement >= 0 ? "up" : "down"
-  const hasMovement = Math.abs(movement) >= 0.005
+export function MarketCard({ market }: { market: MarketSummary }) {
+  const movement = getMovementMeta(market.currentProbability, market.previousClose)
   const isResolved = market.status === "resolved"
-  const resolvedProb = market.resolution === "yes" ? 1 : 0
+  const resolvedProb = getResolvedProbability(market)
 
   return (
     <Link
       href={`/markets/${market.id}`}
       className={cn(
-        "group flex flex-col gap-3 rounded-xl border border-border/60 bg-card p-4 transition-colors hover:border-border hover:bg-accent/30",
+        "group flex min-w-0 flex-col gap-3 rounded-xl border border-border/60 bg-card p-4 transition-colors hover:border-border hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
         isResolved && "opacity-70"
       )}
     >
-      <h3 className="text-[15px] leading-snug font-medium group-hover:text-foreground">
+      <h3 className="text-pretty text-[15px] leading-snug font-medium group-hover:text-foreground">
         {market.title}
       </h3>
 
@@ -26,14 +30,21 @@ export function MarketCard({ market }: { market: Market }) {
         <span className="text-lg font-semibold tabular-nums leading-none">
           {formatProbability(isResolved ? resolvedProb : market.currentProbability)}
         </span>
-        {!isResolved && hasMovement && (
+        {!isResolved && movement.hasMovement && (
           <span
+            aria-label={`${getMovementDirectionLabel(movement.direction)} ${formatMovement(
+              Math.abs(movement.amount),
+              movement.direction
+            )}`}
             className={cn(
               "text-xs tabular-nums",
-              direction === "up" ? "text-emerald-600" : "text-red-500"
+              movement.direction === "up" ? "text-emerald-600" : "text-red-500"
             )}
           >
-            {formatMovement(Math.abs(movement), direction)}
+            <span aria-hidden="true" className="mr-1">
+              {getMovementDirectionSymbol(movement.direction)}
+            </span>
+            {formatMovement(Math.abs(movement.amount), movement.direction)}
           </span>
         )}
       </div>
@@ -46,7 +57,9 @@ export function MarketCard({ market }: { market: Market }) {
         {isResolved ? (
           <span>Resolved</span>
         ) : (
-          <span>{market.events.length} event{market.events.length !== 1 ? "s" : ""}</span>
+          <span>
+            {market.eventCount} event{market.eventCount !== 1 ? "s" : ""}
+          </span>
         )}
       </div>
     </Link>

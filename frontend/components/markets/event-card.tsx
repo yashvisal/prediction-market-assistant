@@ -1,6 +1,10 @@
 "use client"
 
 import * as React from "react"
+import {
+  getMovementDirectionLabel,
+  getMovementDirectionSymbol,
+} from "@/lib/domain/markets"
 import type { MarketEvent } from "@/lib/market-types"
 import { formatMovement, formatDateRange, formatProbability } from "@/lib/formatters"
 import { Badge } from "@/components/ui/badge"
@@ -19,10 +23,12 @@ export function EventCard({ event }: { event: MarketEvent }) {
   return (
     <div className="rounded-lg border border-border/60 bg-card">
       <button
+        type="button"
+        aria-expanded={expanded}
         onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-accent/30"
+        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
       >
-        <span className="text-muted-foreground text-xs select-none">
+        <span aria-hidden="true" className="text-muted-foreground text-xs select-none">
           {expanded ? "▾" : "▸"}
         </span>
 
@@ -37,11 +43,18 @@ export function EventCard({ event }: { event: MarketEvent }) {
 
         <div className="flex items-baseline gap-1.5 shrink-0">
           <span
+            aria-label={`${getMovementDirectionLabel(event.direction)} ${formatMovement(
+              event.movementPercent,
+              event.direction
+            )}`}
             className={cn(
               "text-sm font-semibold tabular-nums",
               event.direction === "up" ? "text-emerald-600" : "text-red-500"
             )}
           >
+            <span aria-hidden="true" className="mr-1">
+              {getMovementDirectionSymbol(event.direction)}
+            </span>
             {formatMovement(event.movementPercent, event.direction)}
           </span>
           <span className="text-xs text-muted-foreground tabular-nums">

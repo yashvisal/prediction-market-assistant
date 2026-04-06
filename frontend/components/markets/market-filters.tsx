@@ -11,23 +11,27 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { UnfoldMoreIcon, Tick02Icon } from "@hugeicons/core-free-icons"
-import type { MarketStatus, MarketCategory } from "@/lib/market-types"
+import {
+  marketCategories,
+  marketStatuses,
+  type MarketStatus,
+  type MarketCategory,
+} from "@/lib/market-types"
 
-const statuses: { value: MarketStatus | "all"; label: string }[] = [
+const statuses: ReadonlyArray<{ value: MarketStatus | "all"; label: string }> = [
   { value: "all", label: "All" },
-  { value: "open", label: "Open" },
-  { value: "resolved", label: "Resolved" },
+  ...marketStatuses.map((status) => ({
+    value: status,
+    label: status.charAt(0).toUpperCase() + status.slice(1),
+  })),
 ]
 
-const categories: { value: MarketCategory | "all"; label: string }[] = [
+const categories: ReadonlyArray<{ value: MarketCategory | "all"; label: string }> = [
   { value: "all", label: "All categories" },
-  { value: "finance", label: "Finance" },
-  { value: "technology", label: "Technology" },
-  { value: "crypto", label: "Crypto" },
-  { value: "science", label: "Science" },
-  { value: "geopolitics", label: "Geopolitics" },
-  { value: "politics", label: "Politics" },
-  { value: "climate", label: "Climate" },
+  ...marketCategories.map((category) => ({
+    value: category,
+    label: category.charAt(0).toUpperCase() + category.slice(1),
+  })),
 ]
 
 export function MarketFilters() {
@@ -65,6 +69,7 @@ export function MarketFilters() {
 
       <DropdownMenu>
         <DropdownMenuTrigger
+          aria-label="Filter markets by category"
           className={cn(
             "inline-flex h-7 items-center gap-1.5 rounded-[min(var(--radius-md),10px)] border border-input bg-transparent px-2.5 text-[0.8rem] whitespace-nowrap text-foreground transition-colors outline-none select-none hover:bg-accent focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
           )}

@@ -123,12 +123,17 @@
     }
   body {
     @apply bg-background text-foreground;
+    -webkit-tap-highlight-color: transparent;
     }
   html {
     @apply font-sans;
+    color-scheme: light;
     scrollbar-gutter: stable;
     overscroll-behavior: none;
     }
+  .dark {
+    color-scheme: dark;
+  }
 }
 
 @keyframes landing-fade-up {
@@ -183,3 +188,11 @@
 .landing-delay-6 { animation-delay: 0.6s; }
 .landing-delay-7 { animation-delay: 0.7s; }
 .landing-delay-8 { animation-delay: 0.8s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-fade-up,
+  .landing-fade-in,
+  .landing-scale-in {
+    animation: none;
+  }
+}

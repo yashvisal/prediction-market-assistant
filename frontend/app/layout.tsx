@@ -43,6 +43,12 @@ export default function RootLayout({
       )}
     >
       <body>
+        <a
+          href="#main-content"
+          className="sr-only fixed left-4 top-4 z-50 rounded-md bg-background px-3 py-2 text-sm font-medium text-foreground shadow-sm focus:not-sr-only focus:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+        >
+          Skip to main content
+        </a>
         <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>

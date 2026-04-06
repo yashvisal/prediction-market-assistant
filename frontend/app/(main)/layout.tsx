@@ -8,7 +8,9 @@ export default function AppLayout({
   return (
     <>
       <SiteHeader />
-      <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
+      <main id="main-content" className="mx-auto max-w-6xl px-4 py-6">
+        {children}
+      </main>
     </>
   )
 }

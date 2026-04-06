@@ -1,19 +1,31 @@
-export type MarketStatus = "open" | "closed" | "resolved"
+export const marketStatuses = ["open", "closed", "resolved"] as const
+export type MarketStatus = (typeof marketStatuses)[number]
 
-export type MarketCategory =
-  | "finance"
-  | "politics"
-  | "technology"
-  | "crypto"
-  | "climate"
-  | "geopolitics"
-  | "science"
-  | "sports"
+export const marketCategories = [
+  "finance",
+  "politics",
+  "technology",
+  "crypto",
+  "climate",
+  "geopolitics",
+  "science",
+  "sports",
+] as const
+export type MarketCategory = (typeof marketCategories)[number]
 
-export type SignalSourceType = "news" | "tweet" | "official" | "analysis"
-export type EntityType = "person" | "organization" | "topic" | "legislation"
-export type RelationshipType = "shared_entity" | "shared_source" | "time_overlap"
-export type MovementDirection = "up" | "down"
+export const signalSourceTypes = ["news", "tweet", "official", "analysis"] as const
+export type SignalSourceType = (typeof signalSourceTypes)[number]
+
+export const entityTypes = ["person", "organization", "topic", "legislation"] as const
+export type EntityType = (typeof entityTypes)[number]
+
+export const relationshipTypes = ["shared_entity", "shared_source", "time_overlap"] as const
+export type RelationshipType = (typeof relationshipTypes)[number]
+
+export const movementDirections = ["up", "down"] as const
+export type MovementDirection = (typeof movementDirections)[number]
+
+export type MarketResolution = "yes" | "no"
 
 export interface Entity {
   id: string
@@ -58,10 +70,9 @@ export interface MarketEvent {
   summary?: string
 }
 
-export interface Market {
+export interface MarketSummary {
   id: string
   title: string
-  description: string
   status: MarketStatus
   category: MarketCategory
   currentProbability: number
@@ -71,6 +82,34 @@ export interface Market {
   createdAt: string
   closesAt: string
   resolvedAt?: string
-  resolution?: "yes" | "no"
-  events: MarketEvent[]
+  resolution?: MarketResolution
+  eventCount: number
+  lastEventAt?: string
+}
+
+export interface MarketDetail extends MarketSummary {
+  description: string
+}
+
+export interface MarketEventFeedItem extends MarketEvent {
+  marketTitle: string
+  marketCategory: MarketCategory
+  marketStatus: MarketStatus
+}
+
+export interface DashboardSnapshot {
+  activeMarkets: MarketSummary[]
+  topEvents: MarketEventFeedItem[]
+}
+
+export interface MarketsResponse {
+  items: MarketSummary[]
+}
+
+export interface MarketEventsResponse {
+  items: MarketEvent[]
+}
+
+export interface HealthResponse {
+  status: "ok"
 }
