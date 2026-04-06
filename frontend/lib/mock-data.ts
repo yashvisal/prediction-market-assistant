@@ -1,6 +1,30 @@
-import type { Market } from "./market-types"
+import type {
+  MarketCategory,
+  MarketDetail,
+  MarketEvent,
+  MarketEventFeedItem,
+  MarketStatus,
+  MarketSummary,
+} from "./market-types"
 
-export const markets: Market[] = [
+interface MockMarketRecord {
+  id: string
+  title: string
+  description: string
+  status: MarketStatus
+  category: MarketCategory
+  currentProbability: number
+  previousClose: number
+  volume: number
+  liquidity: number
+  createdAt: string
+  closesAt: string
+  resolvedAt?: string
+  resolution?: "yes" | "no"
+  events: MarketEvent[]
+}
+
+export const markets: MockMarketRecord[] = [
   {
     id: "fed-rate-cut-jul-2026",
     title: "Will the Federal Reserve cut interest rates before July 2026?",
@@ -606,30 +630,93 @@ export const markets: Market[] = [
   },
 ]
 
-const marketsById = new Map(markets.map((m) => [m.id, m]))
+const marketsById = new Map(markets.map((market) => [market.id, market]))
 
-export function getMarkets(): Market[] {
-  return markets
+function getLastEventAt(events: MarketEvent[]): string | undefined {
+  return events.reduce<string | undefined>((latest, event) => {
+    if (!latest) {
+      return event.endTime
+    }
+
+    return new Date(event.endTime).getTime() > new Date(latest).getTime()
+      ? event.endTime
+      : latest
+  }, undefined)
 }
 
-export function getMarketById(id: string): Market | undefined {
-  return marketsById.get(id)
+function toMarketSummary(market: MockMarketRecord): MarketSummary {
+  return {
+    id: market.id,
+    title: market.title,
+    status: market.status,
+    category: market.category,
+    currentProbability: market.currentProbability,
+    previousClose: market.previousClose,
+    volume: market.volume,
+    liquidity: market.liquidity,
+    createdAt: market.createdAt,
+    closesAt: market.closesAt,
+    resolvedAt: market.resolvedAt,
+    resolution: market.resolution,
+    eventCount: market.events.length,
+    lastEventAt: getLastEventAt(market.events),
+  }
 }
 
-export function getTopEvents() {
+function toMarketDetail(market: MockMarketRecord): MarketDetail {
+  return {
+    ...toMarketSummary(market),
+    description: market.description,
+  }
+}
+
+export function getMarkets(filters?: {
+  status?: MarketStatus
+  category?: MarketCategory
+}): MarketSummary[] {
   return markets
-    .flatMap((m) =>
-      m.events.map((e) => ({
-        ...e,
-        marketTitle: m.title,
-        marketCategory: m.category,
-        marketStatus: m.status,
+    .filter((market) => {
+      if (filters?.status && market.status !== filters.status) {
+        return false
+      }
+
+      if (filters?.category && market.category !== filters.category) {
+        return false
+      }
+
+      return true
+    })
+    .map(toMarketSummary)
+}
+
+export function getMarketById(id: string): MarketDetail | undefined {
+  const market = marketsById.get(id)
+
+  if (!market) {
+    return undefined
+  }
+
+  return toMarketDetail(market)
+}
+
+export function getMarketEvents(id: string): MarketEvent[] {
+  return marketsById.get(id)?.events ?? []
+}
+
+export function getTopEvents(): MarketEventFeedItem[] {
+  return markets
+    .flatMap((market) =>
+      market.events.map((event) => ({
+        ...event,
+        marketTitle: market.title,
+        marketCategory: market.category,
+        marketStatus: market.status,
       }))
     )
     .sort((a, b) => Math.abs(b.movementPercent) - Math.abs(a.movementPercent))
     .slice(0, 4)
 }
 
-export function getActiveMarkets(): Market[] {
-  return markets.filter((m) => m.status === "open")
+export function getActiveMarkets(): MarketSummary[] {
+  return getMarkets({ status: "open" })
 }
