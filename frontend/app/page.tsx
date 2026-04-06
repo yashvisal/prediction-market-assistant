@@ -3,7 +3,7 @@ import { ScrollTo } from "@/components/scroll-to"
 
 export default function LandingPage() {
   return (
-    <div className="min-h-svh">
+    <main id="main-content" className="min-h-svh">
       {/* ───── Hero ───── */}
       <section className="landing-dot-grid relative flex min-h-svh flex-col items-center justify-center overflow-hidden px-6 text-center">
         <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-background" />
@@ -28,15 +28,15 @@ export default function LandingPage() {
           <div className="landing-fade-up landing-delay-3 mt-10 flex items-center justify-center gap-4">
             <Link
               href="/dashboard"
-              className="inline-flex h-10 items-center rounded-lg bg-foreground px-5 text-sm font-medium text-background transition-opacity hover:opacity-80"
+              className="inline-flex h-10 items-center rounded-lg bg-foreground px-5 text-sm font-medium text-background transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
             >
-              Enter the app
+              Enter the App
             </Link>
             <ScrollTo
               target="thesis"
-              className="inline-flex h-10 items-center rounded-lg border border-border px-5 text-sm font-medium text-muted-foreground transition-colors hover:border-foreground/20 hover:text-foreground"
+              className="inline-flex h-10 items-center rounded-lg border border-border px-5 text-sm font-medium text-muted-foreground transition-colors hover:border-foreground/20 hover:text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
             >
-              How it works
+              How It Works
             </ScrollTo>
           </div>
         </div>
@@ -242,19 +242,19 @@ export default function LandingPage() {
           <div className="mt-8 flex items-center justify-center gap-4">
             <Link
               href="/dashboard"
-              className="inline-flex h-10 items-center rounded-lg bg-foreground px-5 text-sm font-medium text-background transition-opacity hover:opacity-80"
+              className="inline-flex h-10 items-center rounded-lg bg-foreground px-5 text-sm font-medium text-background transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
             >
-              Open dashboard
+              Open Dashboard
             </Link>
             <Link
               href="/markets"
-              className="inline-flex h-10 items-center rounded-lg border border-border px-5 text-sm font-medium text-muted-foreground transition-colors hover:border-foreground/20 hover:text-foreground"
+              className="inline-flex h-10 items-center rounded-lg border border-border px-5 text-sm font-medium text-muted-foreground transition-colors hover:border-foreground/20 hover:text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
             >
-              Browse markets
+              Browse Markets
             </Link>
           </div>
         </div>
       </section>
-    </div>
+    </main>
   )
 }
