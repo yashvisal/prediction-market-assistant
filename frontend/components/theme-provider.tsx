@@ -1,7 +1,11 @@
 "use client"
 
 import * as React from "react"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { Moon02Icon, Sun03Icon } from "@hugeicons/core-free-icons"
 import { ThemeProvider as NextThemesProvider, useTheme } from "next-themes"
+
+import { Button } from "@/components/ui/button"
 
 function ThemeProvider({
   children,
@@ -68,4 +72,33 @@ function ThemeHotkey() {
   return null
 }
 
-export { ThemeProvider }
+function ThemeToggle() {
+  const { resolvedTheme, setTheme } = useTheme()
+  const [mounted, setMounted] = React.useState(false)
+
+  React.useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  const activeTheme = mounted ? resolvedTheme ?? "light" : "light"
+  const nextTheme = activeTheme === "dark" ? "light" : "dark"
+
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      aria-label={`Switch to ${nextTheme} mode`}
+      onClick={() => setTheme(nextTheme)}
+    >
+      {activeTheme === "dark" ? (
+        <HugeiconsIcon icon={Moon02Icon} strokeWidth={2} className="size-4" />
+      ) : (
+        <HugeiconsIcon icon={Sun03Icon} strokeWidth={2} className="size-4" />
+      )}
+      <span className="sr-only">Toggle theme</span>
+    </Button>
+  )
+}
+
+export { ThemeProvider, ThemeToggle }

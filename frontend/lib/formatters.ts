@@ -1,5 +1,30 @@
+const probabilityFormatter = new Intl.NumberFormat("en-US", {
+  style: "percent",
+  maximumFractionDigits: 0,
+})
+
+const compactCurrencyFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  notation: "compact",
+  maximumFractionDigits: 1,
+})
+
+const dateFormatter = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  timeZone: "UTC",
+})
+
+const shortDateFormatter = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  timeZone: "UTC",
+})
+
 export function formatProbability(value: number): string {
-  return `${Math.round(value * 100)}%`
+  return probabilityFormatter.format(value)
 }
 
 export function formatMovement(percent: number, direction: "up" | "down"): string {
@@ -8,31 +33,24 @@ export function formatMovement(percent: number, direction: "up" | "down"): strin
 }
 
 export function formatVolume(value: number): string {
-  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`
-  if (value >= 1_000) return `$${(value / 1_000).toFixed(0)}K`
-  return `$${value}`
+  return compactCurrencyFormatter.format(value)
 }
 
 export function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  })
+  return dateFormatter.format(new Date(iso))
 }
 
 export function formatDateRange(start: string, end: string): string {
   const s = new Date(start)
   const e = new Date(end)
-  const sameMonth = s.getMonth() === e.getMonth() && s.getFullYear() === e.getFullYear()
-
-  const startStr = s.toLocaleDateString("en-US", { month: "short", day: "numeric" })
+  const sameMonth = s.getUTCMonth() === e.getUTCMonth() && s.getUTCFullYear() === e.getUTCFullYear()
+  const startStr = shortDateFormatter.format(s)
 
   if (sameMonth) {
-    return `${startStr}–${e.getDate()}, ${e.getFullYear()}`
+    return `${startStr}–${e.getUTCDate()}, ${e.getUTCFullYear()}`
   }
 
-  const endStr = e.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+  const endStr = dateFormatter.format(e)
   return `${startStr} – ${endStr}`
 }
 
