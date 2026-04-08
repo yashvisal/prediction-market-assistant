@@ -5,7 +5,12 @@ description = "FastAPI backend for prediction market assistant"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "boto3>=1.42.84",
+  "cryptography>=46.0.6",
   "fastapi>=0.130.0",
+  "psycopg[binary]>=3.3.3",
+  "python-dotenv>=1.2.2",
+  "requests>=2.33.1",
   "uvicorn[standard]>=0.30.0",
 ]
 
