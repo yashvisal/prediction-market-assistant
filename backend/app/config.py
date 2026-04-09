@@ -47,6 +47,13 @@ def _get_bool(name: str, default: bool) -> bool:
     return value.lower() in {"1", "true", "yes", "on"}
 
 
+def _get_csv(name: str) -> tuple[str, ...]:
+    value = os.getenv(name, "")
+    if not value:
+        return ()
+    return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
 @dataclass(frozen=True)
 class Settings:
     backend_cors_origins: tuple[str, ...]
@@ -71,6 +78,7 @@ class Settings:
     max_events_per_market: int
     max_signals_per_event: int
     persistence_enabled: bool
+    validation_market_tickers: tuple[str, ...]
 
     @property
     def kalshi_web_base_url(self) -> str:
@@ -108,4 +116,5 @@ def get_settings() -> Settings:
         max_events_per_market=_get_int("MAX_EVENTS_PER_MARKET", 4),
         max_signals_per_event=_get_int("MAX_SIGNALS_PER_EVENT", 12),
         persistence_enabled=_get_bool("PERSISTENCE_ENABLED", True),
+        validation_market_tickers=_get_csv("VALIDATION_MARKET_TICKERS"),
     )
