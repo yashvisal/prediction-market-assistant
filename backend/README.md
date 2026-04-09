@@ -20,6 +20,8 @@ The route surface is intentionally unchanged while the service layer underneath 
 - `GET /api/markets`
 - `GET /api/markets/{market_id}`
 - `GET /api/markets/{market_id}/events`
+- `GET /api/internal/heuristics/markets`
+- `GET /api/internal/heuristics/markets/{market_id}/evaluate`
 
 ## Current Architecture
 
@@ -60,26 +62,32 @@ The first implementation intentionally uses `REST + polling` only.
 
 ### Market Selection Strategy
 
-The current top-level market selection logic is intentionally simple and configurable:
+The current tracked-market selection is now quality-aware instead of pure volume ranking.
 
-- fetch a broader set of open Kalshi markets
-- sort them by `volume_fp`
-- keep the top `TRACKED_MARKET_LIMIT`
-- fetch a smaller historical market set
-- sort historical markets by `volume_fp`
-- keep the top `HISTORICAL_MARKET_LIMIT`
-- dedupe the combined set by market ticker
+The sync and evaluation paths both:
+
+- fetch a broader candidate pool for open and historical markets
+- normalize history before deciding which markets deserve the limited rollout slots
+- score each candidate using a weighted blend of:
+  - raw market activity (`volume_fp`, `open_interest_fp`)
+  - non-zero price fields
+  - normalized history density
+  - non-zero probability ratio
+  - recent movement across the retrieved history window
+- penalize markets with all-zero price fields, synthetic-only history, or weak detector input
+- keep the top `TRACKED_MARKET_LIMIT` open markets and top `HISTORICAL_MARKET_LIMIT` historical markets
+- surface selection-debug metadata so the internal evaluator can explain why a market was or was not selected
 
 Current defaults:
 
 - `TRACKED_MARKET_LIMIT=12`
 - `HISTORICAL_MARKET_LIMIT=6`
+- `VALIDATION_MARKET_TICKERS=` optional comma-separated repeatable validation set
 
 Important note:
 
-- This is only a first-pass rollout strategy.
-- It is volume-biased, not quality-biased.
-- It is likely to be one of the first heuristics we revise because it can pull markets that are technically active but not useful for event detection.
+- This is still a heuristic rollout strategy, not a final ranking model.
+- The internal heuristics playground is the intended place to iterate on these weights and thresholds without touching the user-facing route contract.
 
 ### History Shape
 
@@ -105,13 +113,11 @@ The current detector in `backend/app/services/events/detector.py` is determinist
 
 It currently:
 
-- walks normalized points in timestamp order
-- uses an anchor point and searches forward for a move above `EVENT_THRESHOLD`
-- extends the window while movement in the same direction is still increasing
-- records `probabilityBefore`, `probabilityAfter`, `movementPercent`, `direction`, `startTime`, and `endTime`
-- applies a cooldown via `EVENT_COOLDOWN_POINTS`
-- merges overlapping same-direction windows
-- caps output via `MAX_EVENTS_PER_MARKET`
+- builds raw candidates from each anchor point
+- records candidate-level debug payloads before filtering
+- applies threshold, cooldown, merge, and cap filters explicitly
+- returns filtered-candidate drop reasons for internal evaluation
+- keeps the final user-facing event surface deterministic and stable
 
 Current defaults:
 
@@ -151,6 +157,22 @@ Current default bound:
 - `MAX_SIGNALS_PER_EVENT=12`
 
 This is scaffolding for later expansion into external source retrieval. The persistence model already stores source documents and signal rows so we can evolve the retrieval layer without changing the core schema shape again.
+
+### Internal Evaluation Path
+
+There is now a separate read-only evaluation surface for heuristic work.
+
+- It reuses the live Kalshi -> normalize -> detect -> signal pipeline for a single market.
+- It does not persist markets, events, artifacts, or research runs.
+- Request-scoped overrides are applied to a temporary heuristic config only.
+- The payload includes:
+  - market quality summary
+  - selection scoring/debug info
+  - raw candidates
+  - filtered candidates with drop reasons
+  - final events
+  - routing decisions
+  - signal candidates before and after trimming
 
 ### Mock Fallback Behavior
 
@@ -238,6 +260,7 @@ The backend now expects these environment variables:
 - `EVENT_COOLDOWN_POINTS`
 - `MAX_EVENTS_PER_MARKET`
 - `MAX_SIGNALS_PER_EVENT`
+- `VALIDATION_MARKET_TICKERS`
 - `PERSISTENCE_ENABLED`
 
 See `backend/.env.example` for a template.
