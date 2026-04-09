@@ -4,12 +4,12 @@ from dataclasses import replace
 from typing import Any
 from uuid import uuid4
 
-from app.config import Settings
 from app.models.market import Entity, Signal
 from app.services.events.types import EventWindow
+from app.services.heuristics import HeuristicConfig
 from app.services.kalshi.types import NormalizedHistoryPoint, NormalizedMarket
 from app.services.persistence import SourceDocumentRecord
-from app.services.signals.provider import build_signal_candidates
+from app.services.signals.provider import SignalCandidate, build_signal_candidates
 
 
 def attach_signals(
@@ -18,18 +18,19 @@ def attach_signals(
     event: EventWindow,
     history: list[NormalizedHistoryPoint],
     event_id: str,
-    settings: Settings,
-) -> tuple[list[Signal], list[SourceDocumentRecord], list[Entity], dict[str, Any]]:
-    decision = route_research(market=market, event=event)
+    heuristics: HeuristicConfig,
+) -> tuple[list[Signal], list[SourceDocumentRecord], list[Entity], dict[str, Any], list[SignalCandidate]]:
+    decision = route_research(market=market, event=event, heuristics=heuristics)
     if decision == "skip":
-        return [], [], [], {"decision": decision, "reason": "movement below routing threshold"}
+        return [], [], [], {"decision": decision, "reason": "movement below routing threshold", "candidate_count": 0}, []
 
-    candidates = build_signal_candidates(market=market, event=event, history=history, settings=settings)
+    candidates = build_signal_candidates(market=market, event=event, history=history, heuristics=heuristics)
+    kept_candidates = candidates[: heuristics.max_signals_per_event]
     entities: dict[str, Entity] = {}
     documents: list[SourceDocumentRecord] = []
     signals: list[Signal] = []
 
-    for candidate in candidates:
+    for candidate in kept_candidates:
         document = replace(candidate.document, event_id=event_id)
         documents.append(document)
         for entity in candidate.entities:
@@ -53,12 +54,15 @@ def attach_signals(
         "decision": decision,
         "reason": "deterministic provider-backed Kalshi sources",
         "candidate_count": len(candidates),
-    }
+    }, [
+        candidate if candidate in kept_candidates else replace(candidate, debug_payload={**candidate.debug_payload, "trimmed": True})
+        for candidate in candidates
+    ]
 
 
-def route_research(*, market: NormalizedMarket, event: EventWindow) -> str:
-    if event.movement_percent < 0.03:
+def route_research(*, market: NormalizedMarket, event: EventWindow, heuristics: HeuristicConfig) -> str:
+    if event.movement_percent < heuristics.routing_skip_below:
         return "skip"
-    if event.movement_percent < 0.08:
+    if event.movement_percent < heuristics.routing_deep_at_or_above:
         return "light_research"
     return "deep_research"

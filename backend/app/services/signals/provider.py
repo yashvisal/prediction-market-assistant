@@ -5,9 +5,9 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from app.config import Settings
 from app.models.market import Entity, EntityType, SignalSourceType
 from app.services.events.types import EventWindow
+from app.services.heuristics import HeuristicConfig
 from app.services.kalshi.types import NormalizedHistoryPoint, NormalizedMarket
 from app.services.persistence import SourceDocumentRecord
 from app.services.signals.scoring import score_candidate
@@ -24,6 +24,7 @@ class SignalCandidate:
     snippet: str
     relevance_score: float
     entities: list[Entity]
+    debug_payload: dict[str, Any]
 
 
 def build_signal_candidates(
@@ -31,7 +32,7 @@ def build_signal_candidates(
     market: NormalizedMarket,
     event: EventWindow,
     history: list[NormalizedHistoryPoint],
-    settings: Settings,
+    heuristics: HeuristicConfig,
 ) -> list[SignalCandidate]:
     event_end = datetime.fromisoformat(event.end_time.replace("Z", "+00:00")).astimezone(UTC)
     topic_entity = Entity(
@@ -71,9 +72,11 @@ def build_signal_candidates(
                 relevance_score=score_candidate(
                     event_end_time=event_end,
                     candidate_time=datetime.fromisoformat(published_at.replace("Z", "+00:00")).astimezone(UTC),
-                    base_score=0.62,
+                    base_score=heuristics.scoring_base_rules,
+                    heuristics=heuristics,
                 ),
                 entities=[topic_entity],
+                debug_payload={"kind": "market_rules", "trimmed": False},
             )
         )
 
@@ -112,11 +115,12 @@ def build_signal_candidates(
                 relevance_score=score_candidate(
                     event_end_time=event_end,
                     candidate_time=datetime.fromisoformat(latest.timestamp.replace("Z", "+00:00")).astimezone(UTC),
-                    base_score=0.7,
+                    base_score=heuristics.scoring_base_snapshot,
+                    heuristics=heuristics,
                 ),
                 entities=[topic_entity],
+                debug_payload={"kind": "market_snapshot", "trimmed": False, "history_source": latest.source},
             )
         )
 
-    ordered = sorted(candidates, key=lambda item: item.relevance_score, reverse=True)
-    return ordered[: settings.max_signals_per_event]
+    return sorted(candidates, key=lambda item: item.relevance_score, reverse=True)
