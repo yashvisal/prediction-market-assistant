@@ -4,79 +4,42 @@ import hashlib
 import json
 from dataclasses import asdict
 
-from app.config import Settings
+from app.services.heuristics import HeuristicConfig
 from app.models.market import MovementDirection
-from app.services.events.types import DETECTOR_VERSION, EventWindow
+from app.services.events.types import (
+    DETECTOR_VERSION,
+    DetectionEvaluation,
+    EventCandidate,
+    EventWindow,
+    FilteredEventCandidate,
+)
 from app.services.kalshi.types import NormalizedHistoryPoint, NormalizedMarket
 
 
 def detect_event_windows(
     market: NormalizedMarket,
     history: list[NormalizedHistoryPoint],
-    settings: Settings,
+    heuristics: HeuristicConfig,
 ) -> list[EventWindow]:
+    return evaluate_event_detection(market, history, heuristics).final_events
+
+
+def evaluate_event_detection(
+    market: NormalizedMarket,
+    history: list[NormalizedHistoryPoint],
+    heuristics: HeuristicConfig,
+) -> DetectionEvaluation:
     if len(history) < 2:
-        return []
+        return DetectionEvaluation(raw_candidates=[], filtered_candidates=[], final_events=[])
 
     points = sorted(history, key=lambda item: item.timestamp)
-    windows: list[EventWindow] = []
-    start_index = 0
-
-    while start_index < len(points) - 1:
-        anchor = points[start_index]
-        best_index: int | None = None
-        best_delta = 0.0
-
-        for index in range(start_index + 1, len(points)):
-            delta = points[index].probability - anchor.probability
-            if abs(delta) >= settings.event_threshold and abs(delta) >= abs(best_delta):
-                best_index = index
-                best_delta = delta
-
-        if best_index is None:
-            start_index += 1
-            continue
-
-        direction = MovementDirection.UP if best_delta >= 0 else MovementDirection.DOWN
-        end_index = best_index
-
-        for follow_index in range(best_index + 1, len(points)):
-            follow_delta = points[follow_index].probability - anchor.probability
-            same_direction = (follow_delta >= 0 and direction == MovementDirection.UP) or (
-                follow_delta <= 0 and direction == MovementDirection.DOWN
-            )
-            if same_direction and abs(follow_delta) >= abs(best_delta):
-                best_delta = follow_delta
-                end_index = follow_index
-            else:
-                break
-
-        before = anchor.probability
-        after = points[end_index].probability
-        movement = round(abs(after - before), 4)
-        windows.append(
-            EventWindow(
-                market_id=market.id,
-                title=_window_title(market.title, direction, movement),
-                start_time=anchor.timestamp,
-                end_time=points[end_index].timestamp,
-                probability_before=round(before, 4),
-                probability_after=round(after, 4),
-                movement_percent=movement,
-                direction=direction,
-                summary=_window_summary(market.title, direction, before, after, anchor.timestamp, points[end_index].timestamp),
-                debug_payload={
-                    "anchor_index": start_index,
-                    "end_index": end_index,
-                    "threshold": settings.event_threshold,
-                    "detector_version": DETECTOR_VERSION,
-                },
-            )
-        )
-        start_index = min(end_index + settings.event_cooldown_points, len(points) - 1)
-
-    merged = _merge_overlaps(windows)
-    return merged[: settings.max_events_per_market]
+    raw_candidates = _build_raw_candidates(market, points)
+    filtered_candidates, final_events = _filter_candidates(market, raw_candidates, heuristics)
+    return DetectionEvaluation(
+        raw_candidates=raw_candidates,
+        filtered_candidates=filtered_candidates,
+        final_events=final_events,
+    )
 
 
 def stable_event_id(window: EventWindow) -> str:
@@ -89,22 +52,171 @@ def revision_hash(window: EventWindow) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _merge_overlaps(windows: list[EventWindow]) -> list[EventWindow]:
-    if not windows:
-        return []
+def _build_raw_candidates(
+    market: NormalizedMarket,
+    points: list[NormalizedHistoryPoint],
+) -> list[EventCandidate]:
+    candidates: list[EventCandidate] = []
+    for start_index, anchor in enumerate(points[:-1]):
+        best_index = start_index + 1
+        best_delta = points[best_index].probability - anchor.probability
 
-    ordered = sorted(windows, key=lambda item: item.start_time)
-    merged = [ordered[0]]
-    for window in ordered[1:]:
-        previous = merged[-1]
-        overlaps = window.start_time <= previous.end_time and window.direction == previous.direction
-        if not overlaps:
-            merged.append(window)
+        for index in range(start_index + 1, len(points)):
+            delta = points[index].probability - anchor.probability
+            if abs(delta) >= abs(best_delta):
+                best_index = index
+                best_delta = delta
+
+        direction = None
+        if best_delta > 0:
+            direction = MovementDirection.UP
+        elif best_delta < 0:
+            direction = MovementDirection.DOWN
+
+        end_point = points[best_index]
+        movement = round(abs(best_delta), 4)
+        candidates.append(
+            EventCandidate(
+                candidate_id=f"cand-{start_index}-{best_index}",
+                title=_window_title(market.title, direction or MovementDirection.UP, movement),
+                start_time=anchor.timestamp,
+                end_time=end_point.timestamp,
+                probability_before=round(anchor.probability, 4),
+                probability_after=round(end_point.probability, 4),
+                movement_percent=movement,
+                direction=direction,
+                debug_payload={
+                    "anchor_index": start_index,
+                    "end_index": best_index,
+                    "detector_version": DETECTOR_VERSION,
+                },
+            )
+        )
+    return candidates
+
+
+def _filter_candidates(
+    market: NormalizedMarket,
+    raw_candidates: list[EventCandidate],
+    heuristics: HeuristicConfig,
+) -> tuple[list[FilteredEventCandidate], list[EventWindow]]:
+    filtered: list[FilteredEventCandidate] = []
+    kept: list[EventCandidate] = []
+    next_allowed_anchor = 0
+
+    for candidate in raw_candidates:
+        anchor_index = int(candidate.debug_payload["anchor_index"])
+        if candidate.movement_percent < heuristics.event_threshold or candidate.direction is None:
+            filtered.append(
+                FilteredEventCandidate(
+                    candidate=candidate,
+                    stage="filtered",
+                    kept=False,
+                    drop_reason="threshold",
+                )
+            )
             continue
 
-        if window.movement_percent > previous.movement_percent:
-            merged[-1] = window
-    return sorted(merged, key=lambda item: item.start_time, reverse=True)
+        if anchor_index < next_allowed_anchor:
+            filtered.append(
+                FilteredEventCandidate(
+                    candidate=candidate,
+                    stage="filtered",
+                    kept=False,
+                    drop_reason="cooldown",
+                )
+            )
+            continue
+
+        merged = False
+        for index, existing in enumerate(list(kept)):
+            overlaps = candidate.start_time <= (existing.end_time or candidate.end_time) and candidate.direction == existing.direction
+            if not overlaps:
+                continue
+            merged = True
+            if candidate.movement_percent > existing.movement_percent:
+                filtered.append(
+                    FilteredEventCandidate(
+                        candidate=existing,
+                        stage="filtered",
+                        kept=False,
+                        drop_reason="merge",
+                    )
+                )
+                kept[index] = candidate
+                filtered.append(
+                    FilteredEventCandidate(
+                        candidate=candidate,
+                        stage="filtered",
+                        kept=True,
+                        drop_reason=None,
+                    )
+                )
+            else:
+                filtered.append(
+                    FilteredEventCandidate(
+                        candidate=candidate,
+                        stage="filtered",
+                        kept=False,
+                        drop_reason="merge",
+                    )
+                )
+            break
+
+        if merged:
+            continue
+
+        kept.append(candidate)
+        filtered.append(
+            FilteredEventCandidate(
+                candidate=candidate,
+                stage="filtered",
+                kept=True,
+                drop_reason=None,
+            )
+        )
+        next_allowed_anchor = anchor_index + heuristics.event_cooldown_points
+
+    ordered_kept = sorted(kept, key=lambda item: item.start_time, reverse=True)
+    final_candidates = ordered_kept[: heuristics.max_events_per_market]
+    capped_out = {candidate.candidate_id for candidate in ordered_kept[heuristics.max_events_per_market :]}
+    if capped_out:
+        filtered = [
+            FilteredEventCandidate(
+                candidate=item.candidate,
+                stage=item.stage,
+                kept=False,
+                drop_reason="cap",
+            )
+            if item.candidate.candidate_id in capped_out
+            else item
+            for item in filtered
+        ]
+        final_candidates = [candidate for candidate in final_candidates if candidate.candidate_id not in capped_out]
+
+    final_events = [
+        EventWindow(
+            market_id=market.id,
+            title=candidate.title,
+            start_time=candidate.start_time,
+            end_time=candidate.end_time or candidate.start_time,
+            probability_before=candidate.probability_before,
+            probability_after=candidate.probability_after or candidate.probability_before,
+            movement_percent=candidate.movement_percent,
+            direction=candidate.direction or MovementDirection.UP,
+            summary=_window_summary(
+                market.title,
+                candidate.direction or MovementDirection.UP,
+                candidate.probability_before,
+                candidate.probability_after or candidate.probability_before,
+                candidate.start_time,
+                candidate.end_time or candidate.start_time,
+            ),
+            debug_payload={**candidate.debug_payload, "threshold": heuristics.event_threshold},
+        )
+        for candidate in final_candidates
+    ]
+    return filtered, final_events
 
 
 def _window_title(title: str, direction: MovementDirection, movement: float) -> str:
