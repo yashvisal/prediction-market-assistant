@@ -30,9 +30,20 @@ export interface ValidationMarketOption {
   title: string
   status: string
   pool: "open" | "historical"
+  eventId?: string
+  eventTitle?: string
   score: number
   selected: boolean
   knownGood: boolean
+}
+
+export interface HeuristicEventOption {
+  eventId: string
+  title: string
+  status: string
+  pool: "open" | "historical"
+  score: number
+  marketCount: number
 }
 
 export interface HistorySummary {
@@ -95,4 +106,5 @@ export interface HeuristicEvaluationResponse {
 
 export interface HeuristicMarketListResponse {
   items: ValidationMarketOption[]
+  events: HeuristicEventOption[]
 }

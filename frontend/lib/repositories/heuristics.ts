@@ -27,10 +27,17 @@ export interface HeuristicOverrideParams {
   selection_volume_weight?: number
   selection_open_interest_weight?: number
   selection_history_weight?: number
+  selection_recent_trade_weight?: number
+  selection_orderbook_weight?: number
+  selection_event_volume_weight?: number
+  selection_title_quality_weight?: number
+  selection_spread_penalty?: number
   selection_zero_price_penalty?: number
   selection_candidate_pool_multiplier?: number
   selection_min_points?: number
   selection_min_non_zero_ratio?: number
+  selection_min_recent_trades?: number
+  selection_min_history_coverage?: number
 }
 
 export function isHeuristicsApiConfigured() {
@@ -68,8 +75,7 @@ function buildOverrideQuery(overrides: HeuristicOverrideParams) {
 }
 
 export async function listHeuristicMarkets() {
-  const response = await fetchApi<HeuristicMarketListResponse>("/api/internal/heuristics/markets")
-  return response.items
+  return fetchApi<HeuristicMarketListResponse>("/api/internal/heuristics/markets")
 }
 
 export async function getHeuristicEvaluation(
