@@ -32,9 +32,20 @@ class ValidationMarketOption(BaseModel):
     title: str
     status: str
     pool: Literal["open", "historical"]
+    eventId: str | None = None
+    eventTitle: str | None = None
     score: float
     selected: bool
     knownGood: bool
+
+
+class HeuristicEventOption(BaseModel):
+    eventId: str
+    title: str
+    status: str
+    pool: Literal["open", "historical"]
+    score: float
+    marketCount: int
 
 
 class HistorySummary(BaseModel):
@@ -97,3 +108,4 @@ class HeuristicEvaluationResponse(BaseModel):
 
 class HeuristicMarketListResponse(BaseModel):
     items: list[ValidationMarketOption]
+    events: list[HeuristicEventOption] = []

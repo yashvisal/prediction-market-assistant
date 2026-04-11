@@ -13,7 +13,7 @@ from app.services.events.types import (
     EventWindow,
     FilteredEventCandidate,
 )
-from app.services.kalshi.types import NormalizedHistoryPoint, NormalizedMarket
+from app.services.provider_types import NormalizedHistoryPoint, NormalizedMarket
 
 
 def detect_event_windows(

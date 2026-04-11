@@ -2,6 +2,7 @@ from app.config import Settings
 from app.models.evaluation import MarketQualitySummary
 from app.services.heuristics import HeuristicOverrides, apply_heuristic_overrides, heuristics_from_settings
 from app.services.market_analysis import build_selection_debug
+from app.services.provider_types import ProviderSelectionInputs
 
 
 def _settings() -> Settings:
@@ -16,9 +17,8 @@ def _settings() -> Settings:
         aws_secret_access_key="secret",
         s3_bucket="bucket",
         s3_prefix="dev/",
-        kalshi_api_key="kalshi-key",
-        kalshi_api_base_url="https://demo-api.kalshi.co/trade-api/v2",
-        kalshi_private_key_path=__import__("pathlib").Path("dummy.key"),
+        dome_api_key="dome-key",
+        dome_api_base_url="https://api.domeapi.io/v1",
         tracked_market_limit=12,
         historical_market_limit=6,
         sync_interval_seconds=300,
@@ -55,21 +55,30 @@ def test_selection_debug_penalizes_zero_price_markets():
         hasRealHistory=True,
         usableDetectorInput=True,
     )
-    zero_price_market = {
-        "ticker": "ZERO-1",
-        "volume_fp": "1000",
-        "open_interest_fp": "600",
-        "last_price_dollars": "0.0",
-        "previous_price_dollars": "0.0",
-        "yes_bid_dollars": "0.0",
-        "yes_ask_dollars": "0.0",
-    }
-    active_market = {
-        **zero_price_market,
-        "ticker": "ACTIVE-1",
-        "last_price_dollars": "0.42",
-        "yes_bid_dollars": "0.41",
-    }
+    zero_price_market = ProviderSelectionInputs(
+        volume=1000,
+        liquidity=600,
+        non_zero_price_fields=0,
+        recent_trade_count=0,
+        has_orderbook=False,
+        spread=None,
+        title_quality=0.2,
+        event_volume=2000,
+        event_market_count=2,
+        history_coverage_ratio=0.05,
+    )
+    active_market = ProviderSelectionInputs(
+        volume=2500,
+        liquidity=900,
+        non_zero_price_fields=3,
+        recent_trade_count=5,
+        has_orderbook=True,
+        spread=0.02,
+        title_quality=0.7,
+        event_volume=4000,
+        event_market_count=2,
+        history_coverage_ratio=0.4,
+    )
 
     penalized = build_selection_debug(zero_price_market, quality, "open", heuristics)
     active = build_selection_debug(active_market, quality, "open", heuristics)

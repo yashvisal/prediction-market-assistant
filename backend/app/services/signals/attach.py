@@ -7,8 +7,8 @@ from uuid import uuid4
 from app.models.market import Entity, Signal
 from app.services.events.types import EventWindow
 from app.services.heuristics import HeuristicConfig
-from app.services.kalshi.types import NormalizedHistoryPoint, NormalizedMarket
 from app.services.persistence import SourceDocumentRecord
+from app.services.provider_types import NormalizedHistoryPoint, NormalizedMarket
 from app.services.signals.provider import SignalCandidate, build_signal_candidates
 
 
@@ -52,7 +52,7 @@ def attach_signals(
 
     return signals, documents, list(entities.values()), {
         "decision": decision,
-        "reason": "deterministic provider-backed Kalshi sources",
+        "reason": f"deterministic provider-backed {market.provider} sources",
         "candidate_count": len(candidates),
     }, [
         candidate if candidate in kept_candidates else replace(candidate, debug_payload={**candidate.debug_payload, "trimmed": True})

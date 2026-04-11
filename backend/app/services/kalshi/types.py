@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import Any, TypedDict
 
-from app.models.market import MarketCategory, MarketStatus, MovementDirection
+from app.services.provider_types import NormalizedHistoryPoint, NormalizedLiveUpdate, NormalizedMarket
 
 
 class KalshiMarket(TypedDict, total=False):
@@ -41,49 +40,3 @@ class KalshiCandlestick(TypedDict, total=False):
     volume: str | None
     open_interest_fp: str | None
     open_interest: str | None
-
-
-@dataclass(frozen=True)
-class NormalizedMarket:
-    id: str
-    provider: str
-    provider_market_ticker: str
-    provider_event_ticker: str
-    title: str
-    description: str
-    status: MarketStatus
-    category: MarketCategory
-    current_probability: float
-    previous_close: float
-    volume: int
-    liquidity: int
-    created_at: str
-    closes_at: str
-    resolved_at: str | None
-    resolution: str | None
-    detail_url: str
-    rules_primary: str
-    rules_secondary: str
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class NormalizedHistoryPoint:
-    market_id: str
-    timestamp: str
-    probability: float
-    yes_bid: float | None
-    yes_ask: float | None
-    volume: int | None
-    open_interest: int | None
-    source: str
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class NormalizedLiveUpdate:
-    market_id: str
-    timestamp: str
-    probability: float
-    direction: MovementDirection
-    metadata: dict[str, Any] = field(default_factory=dict)

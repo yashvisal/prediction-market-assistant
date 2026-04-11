@@ -3,6 +3,7 @@ import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import type {
   EventCandidateDebug,
+  HeuristicEventOption,
   HeuristicEvaluationResponse,
   SignalCandidateDebug,
   ValidationMarketOption,
@@ -40,10 +41,17 @@ const DEFAULT_OVERRIDES: Required<HeuristicOverrideParams> = {
   selection_volume_weight: 0.45,
   selection_open_interest_weight: 0.3,
   selection_history_weight: 0.85,
+  selection_recent_trade_weight: 0.45,
+  selection_orderbook_weight: 0.35,
+  selection_event_volume_weight: 0.25,
+  selection_title_quality_weight: 0.4,
+  selection_spread_penalty: 0.3,
   selection_zero_price_penalty: 0.9,
   selection_candidate_pool_multiplier: 4,
   selection_min_points: 6,
   selection_min_non_zero_ratio: 0.15,
+  selection_min_recent_trades: 2,
+  selection_min_history_coverage: 0.1,
 }
 
 function stringValue(value: string | string[] | undefined) {
@@ -86,10 +94,17 @@ function buildOverrides(
     selection_volume_weight: numberValue(params, "selection_volume_weight"),
     selection_open_interest_weight: numberValue(params, "selection_open_interest_weight"),
     selection_history_weight: numberValue(params, "selection_history_weight"),
+    selection_recent_trade_weight: numberValue(params, "selection_recent_trade_weight"),
+    selection_orderbook_weight: numberValue(params, "selection_orderbook_weight"),
+    selection_event_volume_weight: numberValue(params, "selection_event_volume_weight"),
+    selection_title_quality_weight: numberValue(params, "selection_title_quality_weight"),
+    selection_spread_penalty: numberValue(params, "selection_spread_penalty"),
     selection_zero_price_penalty: numberValue(params, "selection_zero_price_penalty"),
     selection_candidate_pool_multiplier: numberValue(params, "selection_candidate_pool_multiplier"),
     selection_min_points: numberValue(params, "selection_min_points"),
     selection_min_non_zero_ratio: numberValue(params, "selection_min_non_zero_ratio"),
+    selection_min_recent_trades: numberValue(params, "selection_min_recent_trades"),
+    selection_min_history_coverage: numberValue(params, "selection_min_history_coverage"),
   }
 }
 
@@ -106,7 +121,7 @@ function buildMarketHref(
     }
   }
 
-  return `/internal/heuristics?${params.toString()}`
+  return `/heuristics?${params.toString()}`
 }
 
 function Stat({
@@ -281,7 +296,7 @@ function ValidationStrip({
               : "border-border/60 bg-background/60 text-muted-foreground hover:border-border hover:bg-muted/40"
           )}
         >
-          <span className="font-medium">{item.marketId}</span>
+          <span className="font-medium">{item.eventTitle ? `${item.eventTitle} · ` : ""}{item.marketId}</span>
           <span className="ml-2 font-mono">{item.score.toFixed(2)}</span>
           {item.knownGood ? (
             <span className="ml-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
@@ -290,6 +305,30 @@ function ValidationStrip({
           ) : null}
         </Link>
       ))}
+    </div>
+  )
+}
+
+function EventStrip({ items }: { items: HeuristicEventOption[] }) {
+  if (items.length === 0) {
+    return null
+  }
+
+  return (
+    <div className="space-y-2">
+      <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Event shortlist</p>
+      <div className="flex flex-wrap gap-2">
+        {items.map((item) => (
+          <span
+            key={item.eventId}
+            className="rounded-full border border-border/60 bg-background/60 px-3 py-1.5 text-xs text-muted-foreground"
+          >
+            <span className="font-medium text-foreground">{item.title}</span>
+            <span className="ml-2 font-mono">{item.score.toFixed(2)}</span>
+            <span className="ml-2">{item.marketCount} markets</span>
+          </span>
+        ))}
+      </div>
     </div>
   )
 }
@@ -316,11 +355,14 @@ export default async function InternalHeuristicsPage({ searchParams }: Props) {
   }
 
   let markets: ValidationMarketOption[] = []
+  let events: HeuristicEventOption[] = []
   let evaluation: HeuristicEvaluationResponse | null = null
   let errorMessage: string | null = null
 
   try {
-    markets = await listHeuristicMarkets()
+    const discovery = await listHeuristicMarkets()
+    markets = discovery.items
+    events = discovery.events
     const marketId = requestedMarketId ?? markets[0]?.marketId
     if (marketId) {
       evaluation = await getHeuristicEvaluation(marketId, overrides)
@@ -335,9 +377,9 @@ export default async function InternalHeuristicsPage({ searchParams }: Props) {
         <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Internal</p>
         <h1 className="text-2xl font-semibold tracking-tight">Heuristics Playground</h1>
         <p className="max-w-3xl text-sm leading-relaxed text-muted-foreground">
-          Read-only evaluation console for market selection, event detection, and signal
-          routing. It reuses the live backend pipeline without writing persistence side
-          effects.
+          Read-only evaluation console for event-first discovery, market selection, event
+          detection, and signal routing. It reuses the live backend pipeline without writing
+          persistence side effects.
         </p>
       </section>
 
@@ -350,10 +392,11 @@ export default async function InternalHeuristicsPage({ searchParams }: Props) {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
+          <EventStrip items={events} />
           {markets.length > 0 ? <ValidationStrip items={markets} overrides={overrides} /> : null}
           <form method="GET" className="grid gap-4 lg:grid-cols-3">
             <label className="space-y-1 text-sm">
-              <span className="text-muted-foreground">Market ticker</span>
+              <span className="text-muted-foreground">Market slug</span>
               <select
                 name="marketId"
                 defaultValue={requestedMarketId ?? markets[0]?.marketId ?? ""}
@@ -361,6 +404,7 @@ export default async function InternalHeuristicsPage({ searchParams }: Props) {
               >
                 {markets.map((item) => (
                   <option key={item.marketId} value={item.marketId}>
+                    {item.eventTitle ? `${item.eventTitle} · ` : ""}
                     {item.marketId} · {item.title}
                   </option>
                 ))}
@@ -387,10 +431,17 @@ export default async function InternalHeuristicsPage({ searchParams }: Props) {
                 ["selection_volume_weight", "Selection volume weight"],
                 ["selection_open_interest_weight", "Selection open interest weight"],
                 ["selection_history_weight", "Selection history weight"],
+                ["selection_recent_trade_weight", "Selection trade weight"],
+                ["selection_orderbook_weight", "Selection orderbook weight"],
+                ["selection_event_volume_weight", "Selection event volume weight"],
+                ["selection_title_quality_weight", "Selection title quality weight"],
+                ["selection_spread_penalty", "Selection spread penalty"],
                 ["selection_zero_price_penalty", "Zero-price penalty"],
                 ["selection_candidate_pool_multiplier", "Candidate pool multiplier"],
                 ["selection_min_points", "Minimum points"],
                 ["selection_min_non_zero_ratio", "Min non-zero ratio"],
+                ["selection_min_recent_trades", "Min recent trades"],
+                ["selection_min_history_coverage", "Min history coverage"],
               ] as const
             ).map(([key, label]) => (
               <label key={key} className="space-y-1 text-sm">
