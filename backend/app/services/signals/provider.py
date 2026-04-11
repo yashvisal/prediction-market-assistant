@@ -8,8 +8,8 @@ from uuid import uuid4
 from app.models.market import Entity, EntityType, SignalSourceType
 from app.services.events.types import EventWindow
 from app.services.heuristics import HeuristicConfig
-from app.services.kalshi.types import NormalizedHistoryPoint, NormalizedMarket
 from app.services.persistence import SourceDocumentRecord
+from app.services.provider_types import NormalizedHistoryPoint, NormalizedMarket
 from app.services.signals.scoring import score_candidate
 
 
@@ -48,8 +48,8 @@ def build_signal_candidates(
             id=f"doc-{uuid4()}",
             event_id="",
             market_id=market.id,
-            title=f"Kalshi rules for {market.title}",
-            source="Kalshi",
+            title=f"{market.provider.title()} market context for {market.title}",
+            source=market.provider.title(),
             source_type=SignalSourceType.OFFICIAL.value,
             url=market.detail_url,
             published_at=published_at,
@@ -87,8 +87,8 @@ def build_signal_candidates(
             id=f"doc-{uuid4()}",
             event_id="",
             market_id=market.id,
-            title=f"Kalshi market snapshot near {event.title}",
-            source="Kalshi Market Data",
+            title=f"{market.provider.title()} market snapshot near {event.title}",
+            source=f"{market.provider.title()} Market Data",
             source_type=SignalSourceType.ANALYSIS.value,
             url=market.detail_url,
             published_at=latest.timestamp,
