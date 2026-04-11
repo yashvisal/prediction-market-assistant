@@ -66,9 +66,8 @@ class Settings:
     aws_secret_access_key: str
     s3_bucket: str
     s3_prefix: str
-    kalshi_api_key: str
-    kalshi_api_base_url: str
-    kalshi_private_key_path: Path
+    dome_api_key: str
+    dome_api_base_url: str
     tracked_market_limit: int
     historical_market_limit: int
     sync_interval_seconds: int
@@ -81,17 +80,15 @@ class Settings:
     validation_market_tickers: tuple[str, ...]
 
     @property
-    def kalshi_web_base_url(self) -> str:
-        return "https://demo.kalshi.co" if "demo-api" in self.kalshi_api_base_url else "https://kalshi.com"
+    def dome_web_base_url(self) -> str:
+        return "https://polymarket.com"
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     cors = os.getenv("BACKEND_CORS_ORIGINS", "http://localhost:3000")
     publishable = _get_optional("SUPABASE_PUBLISHABLE_KEY") or _get_optional("SUPABASE_ANON_KEY")
-    kalshi_api_key = _get_optional("KALSHI_API_KEY") or _get_optional("KALSHI_API_KEY_ID")
-    if not kalshi_api_key:
-        raise RuntimeError("Missing required environment variable: KALSHI_API_KEY or KALSHI_API_KEY_ID")
+    dome_api_key = _get_required("DOME_API_KEY")
 
     return Settings(
         backend_cors_origins=tuple(origin.strip() for origin in cors.split(",") if origin.strip()),
@@ -104,9 +101,8 @@ def get_settings() -> Settings:
         aws_secret_access_key=_get_required("AWS_SECRET_ACCESS_KEY"),
         s3_bucket=_get_required("S3_BUCKET"),
         s3_prefix=_get_optional("S3_PREFIX", "dev/") or "dev/",
-        kalshi_api_key=kalshi_api_key,
-        kalshi_api_base_url=_get_required("KALSHI_API_BASE_URL").rstrip("/"),
-        kalshi_private_key_path=Path(_get_required("KALSHI_PRIVATE_KEY_PATH")),
+        dome_api_key=dome_api_key,
+        dome_api_base_url=_get_required("DOME_API_BASE_URL").rstrip("/"),
         tracked_market_limit=_get_int("TRACKED_MARKET_LIMIT", 12),
         historical_market_limit=_get_int("HISTORICAL_MARKET_LIMIT", 6),
         sync_interval_seconds=_get_int("SYNC_INTERVAL_SECONDS", 300),

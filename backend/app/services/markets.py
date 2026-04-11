@@ -26,8 +26,9 @@ from app.services.heuristics import (
     apply_heuristic_overrides,
     heuristics_from_settings,
 )
-from app.services.kalshi.client import KalshiClient
+from app.services.dome_markets import DomeMarketNotFoundError, get_dome_market_seed, list_dome_market_seeds
 from app.services.market_analysis import (
+    build_event_options,
     MarketCandidateContext,
     build_candidate_context,
     build_validation_market_options,
@@ -36,6 +37,7 @@ from app.services.market_analysis import (
     score_prefetch_candidate,
 )
 from app.services.persistence import MarketStore
+from app.services.provider_types import MarketSeed
 from app.services.signals.attach import attach_signals
 
 
@@ -56,11 +58,6 @@ def _store() -> MarketStore:
 @lru_cache(maxsize=1)
 def _artifact_store() -> ArtifactStore:
     return ArtifactStore(_settings())
-
-
-@lru_cache(maxsize=1)
-def _kalshi_client() -> KalshiClient:
-    return KalshiClient(_settings())
 
 
 def initialize_runtime() -> None:
@@ -133,7 +130,10 @@ def get_dashboard_snapshot() -> DashboardSnapshotResponse:
 def list_heuristic_market_options() -> HeuristicMarketListResponse:
     heuristics = heuristics_from_settings(_settings())
     ranked = _load_ranked_candidate_contexts(heuristics)
-    return HeuristicMarketListResponse(items=build_validation_market_options(ranked, heuristics))
+    return HeuristicMarketListResponse(
+        items=build_validation_market_options(ranked, heuristics),
+        events=build_event_options(ranked),
+    )
 
 
 def evaluate_market_heuristics(
@@ -171,8 +171,7 @@ def _ensure_runtime_data() -> None:
 
 
 def _sync_pipeline() -> None:
-    settings = _settings()
-    heuristics = heuristics_from_settings(settings)
+    heuristics = heuristics_from_settings(_settings())
     store = _store()
     artifact_store = _artifact_store()
     artifacts = []
@@ -183,19 +182,22 @@ def _sync_pipeline() -> None:
             owner_type="market",
             owner_id=context.normalized_market.id,
             artifact_type="metadata",
-            payload=context.bundle.raw_market,
+            payload={
+                "market": context.bundle.raw_market,
+                "event": context.bundle.raw_event,
+            },
             captured_at=datetime.now(UTC),
-            source_url=f"{settings.kalshi_api_base_url}/markets",
-            metadata={"provider": "kalshi"},
+            source_url=context.bundle.source_url,
+            metadata={"provider": "dome"},
         )
         history_artifact = artifact_store.put_json(
             owner_type="market",
             owner_id=context.normalized_market.id,
             artifact_type="candlesticks",
-            payload={"ticker": context.normalized_market.id, "candlesticks": context.bundle.candlesticks},
+            payload=context.bundle.history_payload,
             captured_at=datetime.now(UTC),
-            source_url=context.normalized_market.detail_url,
-            metadata={"provider": "kalshi", "history_source": context.bundle.history_source},
+            source_url=context.bundle.source_url,
+            metadata={"provider": "dome", "history_source": context.bundle.history_source},
         )
         artifacts.extend([market_artifact.record, history_artifact.record])
 
@@ -301,30 +303,30 @@ def _match_document_id(url: str, title: str, documents) -> str | None:
     return documents[0].id if documents else None
 
 
-def _shortlist_raw_markets(
-    raw_markets: list[dict[str, object]],
+def _shortlist_market_seeds(
+    seeds: list[MarketSeed],
     *,
     shortlist_limit: int,
     heuristics: HeuristicConfig,
-) -> list[dict[str, object]]:
-    if len(raw_markets) <= shortlist_limit:
-        return raw_markets
+) -> list[MarketSeed]:
+    if len(seeds) <= shortlist_limit:
+        return seeds
 
     pinned_tickers = set(heuristics.validation_market_tickers)
-    ranked = sorted(raw_markets, key=lambda market: score_prefetch_candidate(market, heuristics), reverse=True)
-    shortlisted: list[dict[str, object]] = []
+    ranked = sorted(seeds, key=lambda seed: score_prefetch_candidate(seed.prefetch_inputs, heuristics), reverse=True)
+    shortlisted: list[MarketSeed] = []
     seen_tickers: set[str] = set()
 
-    for market in raw_markets:
-        ticker = str(market.get("ticker", ""))
+    for seed in seeds:
+        ticker = str(seed.raw_market.get("market_slug", ""))
         if ticker in pinned_tickers and ticker not in seen_tickers:
-            shortlisted.append(market)
+            shortlisted.append(seed)
             seen_tickers.add(ticker)
 
-    for market in ranked:
-        ticker = str(market.get("ticker", ""))
+    for seed in ranked:
+        ticker = str(seed.raw_market.get("market_slug", ""))
         if ticker and ticker not in seen_tickers:
-            shortlisted.append(market)
+            shortlisted.append(seed)
             seen_tickers.add(ticker)
         if len(shortlisted) >= shortlist_limit:
             break
@@ -337,58 +339,39 @@ def _history_shortlist_limit(limit: int, heuristics: HeuristicConfig) -> int:
     return max(limit, limit * shortlist_multiplier)
 
 
+def _event_seed_limit(limit: int, heuristics: HeuristicConfig) -> int:
+    return max(4, (limit * heuristics.selection_candidate_pool_multiplier + 2) // 3)
+
+
 def _build_candidate_contexts(
-    raw_markets: list[dict[str, object]],
+    seeds: list[MarketSeed],
     *,
-    pool: str,
     limit: int,
-    client: KalshiClient,
-    settings: Settings,
     heuristics: HeuristicConfig,
 ) -> list[MarketCandidateContext]:
-    shortlisted = _shortlist_raw_markets(
-        raw_markets,
+    shortlisted = _shortlist_market_seeds(
+        seeds,
         shortlist_limit=_history_shortlist_limit(limit, heuristics),
         heuristics=heuristics,
     )
     return [
         build_candidate_context(
-            raw_market=market,
-            pool=pool,
-            client=client,
-            settings=settings,
+            seed=seed,
             heuristics=heuristics,
         )
-        for market in shortlisted
+        for seed in shortlisted
     ]
 
 
 def _load_selected_candidate_contexts(heuristics: HeuristicConfig) -> list[MarketCandidateContext]:
-    settings = _settings()
-    client = _kalshi_client()
-
-    open_raw = client.list_markets(
-        limit=max(heuristics.tracked_market_limit * heuristics.selection_candidate_pool_multiplier, 20),
-        status="open",
-    )
-    historical_raw = client.list_historical_markets(
-        limit=max(heuristics.historical_market_limit * heuristics.selection_candidate_pool_multiplier, 12)
-    )
-
     open_contexts = _build_candidate_contexts(
-        open_raw,
-        pool="open",
+        list_dome_market_seeds(_event_seed_limit(heuristics.tracked_market_limit, heuristics), status="open"),
         limit=heuristics.tracked_market_limit,
-        client=client,
-        settings=settings,
         heuristics=heuristics,
     )
     historical_contexts = _build_candidate_contexts(
-        historical_raw,
-        pool="historical",
+        list_dome_market_seeds(_event_seed_limit(heuristics.historical_market_limit, heuristics), status="closed"),
         limit=heuristics.historical_market_limit,
-        client=client,
-        settings=settings,
         heuristics=heuristics,
     )
 
@@ -406,28 +389,13 @@ def _load_selected_candidate_contexts(heuristics: HeuristicConfig) -> list[Marke
 
 
 def _load_ranked_candidate_contexts(heuristics: HeuristicConfig) -> list[MarketCandidateContext]:
-    settings = _settings()
-    client = _kalshi_client()
-    open_raw = client.list_markets(
-        limit=max(heuristics.tracked_market_limit * heuristics.selection_candidate_pool_multiplier, 20),
-        status="open",
-    )
-    historical_raw = client.list_historical_markets(
-        limit=max(heuristics.historical_market_limit * heuristics.selection_candidate_pool_multiplier, 12)
-    )
     contexts = _build_candidate_contexts(
-        open_raw,
-        pool="open",
+        list_dome_market_seeds(_event_seed_limit(heuristics.tracked_market_limit, heuristics), status="open"),
         limit=heuristics.tracked_market_limit,
-        client=client,
-        settings=settings,
         heuristics=heuristics,
     ) + _build_candidate_contexts(
-        historical_raw,
-        pool="historical",
+        list_dome_market_seeds(_event_seed_limit(heuristics.historical_market_limit, heuristics), status="closed"),
         limit=heuristics.historical_market_limit,
-        client=client,
-        settings=settings,
         heuristics=heuristics,
     )
     ranked, _selected = rank_candidate_contexts(
@@ -442,22 +410,11 @@ def _load_market_context_by_id(
     market_id: str,
     heuristics: HeuristicConfig,
 ) -> MarketCandidateContext | None:
-    settings = _settings()
-    client = _kalshi_client()
-    raw_market = client.get_market(market_id)
-    pool = "open"
-    if raw_market is None:
-        raw_market = client.get_historical_market(market_id)
-        pool = "historical"
-    if raw_market is None:
+    try:
+        seed = get_dome_market_seed(market_id)
+    except (DomeMarketNotFoundError, KeyError):
         return None
-    return build_candidate_context(
-        raw_market=raw_market,
-        pool=pool,
-        client=client,
-        settings=settings,
-        heuristics=heuristics,
-    )
+    return build_candidate_context(seed=seed, heuristics=heuristics)
 
 
 def _market_row(

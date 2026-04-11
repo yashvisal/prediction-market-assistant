@@ -2,7 +2,7 @@ from app.config import Settings
 from app.models.market import MarketCategory, MarketStatus, MovementDirection
 from app.services.events.detector import detect_event_windows, evaluate_event_detection
 from app.services.heuristics import heuristics_from_settings
-from app.services.kalshi.types import NormalizedHistoryPoint, NormalizedMarket
+from app.services.provider_types import NormalizedHistoryPoint, NormalizedMarket
 
 
 def _settings() -> Settings:
@@ -17,9 +17,8 @@ def _settings() -> Settings:
         aws_secret_access_key="secret",
         s3_bucket="bucket",
         s3_prefix="dev/",
-        kalshi_api_key="kalshi-key",
-        kalshi_api_base_url="https://demo-api.kalshi.co/trade-api/v2",
-        kalshi_private_key_path=__import__("pathlib").Path("dummy.key"),
+        dome_api_key="dome-key",
+        dome_api_base_url="https://api.domeapi.io/v1",
         tracked_market_limit=12,
         historical_market_limit=6,
         sync_interval_seconds=300,
@@ -36,7 +35,7 @@ def _settings() -> Settings:
 def test_detect_event_windows_emits_explainable_move():
     market = NormalizedMarket(
         id="MARKET-1",
-        provider="kalshi",
+        provider="dome",
         provider_market_ticker="MARKET-1",
         provider_event_ticker="EVENT-1",
         title="Will rates be cut?",
@@ -51,7 +50,7 @@ def test_detect_event_windows_emits_explainable_move():
         closes_at="2026-04-10T00:00:00Z",
         resolved_at=None,
         resolution=None,
-        detail_url="https://demo.kalshi.co/markets/MARKET-1",
+        detail_url="https://polymarket.com/event/sample-event",
         rules_primary="Rules",
         rules_secondary="Secondary",
         metadata={},
@@ -77,7 +76,7 @@ def test_detect_event_windows_emits_explainable_move():
 def test_evaluate_event_detection_exposes_threshold_drop_reason():
     market = NormalizedMarket(
         id="MARKET-2",
-        provider="kalshi",
+        provider="dome",
         provider_market_ticker="MARKET-2",
         provider_event_ticker="EVENT-2",
         title="Will inflation cool?",
@@ -92,7 +91,7 @@ def test_evaluate_event_detection_exposes_threshold_drop_reason():
         closes_at="2026-04-10T00:00:00Z",
         resolved_at=None,
         resolution=None,
-        detail_url="https://demo.kalshi.co/markets/MARKET-2",
+        detail_url="https://polymarket.com/event/sample-event",
         rules_primary="Rules",
         rules_secondary="Secondary",
         metadata={},

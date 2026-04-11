@@ -26,10 +26,17 @@ class HeuristicConfig:
     selection_non_zero_ratio_weight: float
     selection_recent_movement_weight: float
     selection_history_weight: float
+    selection_recent_trade_weight: float
+    selection_orderbook_weight: float
+    selection_event_volume_weight: float
+    selection_title_quality_weight: float
+    selection_spread_penalty: float
     selection_zero_price_penalty: float
     selection_candidate_pool_multiplier: int
     selection_min_points: int
     selection_min_non_zero_ratio: float
+    selection_min_recent_trades: int
+    selection_min_history_coverage: float
     validation_market_tickers: tuple[str, ...]
 
 
@@ -54,10 +61,17 @@ class HeuristicOverrides:
     selection_non_zero_ratio_weight: float | None = None
     selection_recent_movement_weight: float | None = None
     selection_history_weight: float | None = None
+    selection_recent_trade_weight: float | None = None
+    selection_orderbook_weight: float | None = None
+    selection_event_volume_weight: float | None = None
+    selection_title_quality_weight: float | None = None
+    selection_spread_penalty: float | None = None
     selection_zero_price_penalty: float | None = None
     selection_candidate_pool_multiplier: int | None = None
     selection_min_points: int | None = None
     selection_min_non_zero_ratio: float | None = None
+    selection_min_recent_trades: int | None = None
+    selection_min_history_coverage: float | None = None
 
 
 def heuristics_from_settings(settings: Settings) -> HeuristicConfig:
@@ -81,10 +95,17 @@ def heuristics_from_settings(settings: Settings) -> HeuristicConfig:
         selection_non_zero_ratio_weight=1.35,
         selection_recent_movement_weight=1.60,
         selection_history_weight=0.85,
+        selection_recent_trade_weight=0.45,
+        selection_orderbook_weight=0.35,
+        selection_event_volume_weight=0.25,
+        selection_title_quality_weight=0.40,
+        selection_spread_penalty=0.30,
         selection_zero_price_penalty=0.90,
         selection_candidate_pool_multiplier=4,
         selection_min_points=6,
         selection_min_non_zero_ratio=0.15,
+        selection_min_recent_trades=2,
+        selection_min_history_coverage=0.1,
         validation_market_tickers=settings.validation_market_tickers,
     )
 

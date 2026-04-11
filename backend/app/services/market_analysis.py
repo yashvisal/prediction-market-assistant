@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from math import log1p
 from statistics import pvariance
+from typing import Any
 
-from app.config import Settings
 from app.models.evaluation import (
     EventCandidateDebug,
     HeuristicEvaluationResponse,
+    HeuristicEventOption,
     HistorySummary,
     MarketQualitySummary,
     RoutingDecisionDebug,
@@ -16,51 +18,47 @@ from app.models.evaluation import (
     ValidationMarketOption,
 )
 from app.models.market import MarketDetail, MarketEvent
+from app.services.dome_markets import DomeHydratedMarket, hydrate_dome_market
 from app.services.events.detector import evaluate_event_detection, stable_event_id
 from app.services.heuristics import HeuristicConfig
-from app.services.kalshi.client import KalshiClient, KalshiMarketBundle
-from app.services.kalshi.normalize import normalize_candlesticks, normalize_market
-from app.services.kalshi.types import KalshiMarket, NormalizedHistoryPoint, NormalizedMarket
+from app.services.provider_types import MarketSeed, NormalizedHistoryPoint, NormalizedMarket, ProviderSelectionInputs
 from app.services.signals.attach import attach_signals
 
 
 @dataclass(frozen=True)
 class MarketCandidateContext:
     pool: str
-    raw_market: KalshiMarket
-    bundle: KalshiMarketBundle
+    raw_market: dict[str, Any]
+    bundle: Any
     normalized_market: NormalizedMarket
     history: list[NormalizedHistoryPoint]
     quality_summary: MarketQualitySummary
     selection_debug: SelectionDebugInfo
+    selection_inputs: ProviderSelectionInputs
 
 
 def build_candidate_context(
     *,
-    raw_market: KalshiMarket,
-    pool: str,
-    client: KalshiClient,
-    settings: Settings,
+    seed: MarketSeed,
     heuristics: HeuristicConfig,
 ) -> MarketCandidateContext:
-    bundle = client.get_market_bundle(raw_market, history_window_days=heuristics.history_window_days)
-    normalized_market = normalize_market(bundle.raw_market, web_base_url=settings.kalshi_web_base_url)
-    history = normalize_candlesticks(
-        normalized_market.id,
-        bundle.candlesticks,
-        source=bundle.history_source,
+    hydrated: DomeHydratedMarket = hydrate_dome_market(
+        raw_market=seed.raw_market,
+        raw_event=seed.raw_event,
+        history_window_days=heuristics.history_window_days,
     )
-    history = ensure_minimum_history(normalized_market, raw_market, history)
+    history = ensure_minimum_history(hydrated.normalized_market, seed.raw_market, hydrated.history)
     quality_summary = build_market_quality_summary(history, heuristics)
-    selection_debug = build_selection_debug(raw_market, quality_summary, pool, heuristics)
+    selection_debug = build_selection_debug(hydrated.selection_inputs, quality_summary, seed.pool, heuristics)
     return MarketCandidateContext(
-        pool=pool,
-        raw_market=raw_market,
-        bundle=bundle,
-        normalized_market=normalized_market,
+        pool=seed.pool,
+        raw_market=seed.raw_market,
+        bundle=hydrated.bundle,
+        normalized_market=hydrated.normalized_market,
         history=history,
         quality_summary=quality_summary,
         selection_debug=selection_debug,
+        selection_inputs=hydrated.selection_inputs,
     )
 
 
@@ -94,38 +92,49 @@ def build_market_quality_summary(
 
 
 def build_selection_debug(
-    raw_market: KalshiMarket,
+    selection_inputs: ProviderSelectionInputs,
     quality: MarketQualitySummary,
     pool: str,
     heuristics: HeuristicConfig,
 ) -> SelectionDebugInfo:
-    volume_value = _float_value(raw_market.get("volume_fp"))
-    open_interest_value = _float_value(raw_market.get("open_interest_fp"))
-    current_price_non_zero = any(
-        _float_value(raw_market.get(field)) > 0
-        for field in (
-            "last_price_dollars",
-            "previous_price_dollars",
-            "yes_bid_dollars",
-            "yes_ask_dollars",
-        )
+    current_price_non_zero = selection_inputs.non_zero_price_fields > 0
+    history_score = min(
+        max(
+            quality.pointCount / max(1, heuristics.selection_min_points),
+            selection_inputs.history_coverage_ratio,
+        ),
+        1.0,
     )
+    spread_penalty = min((selection_inputs.spread or 0.0) * 10, 1.0) * heuristics.selection_spread_penalty
     components = {
-        "volume": round(min(log1p(volume_value) / 8, 1.0) * heuristics.selection_volume_weight, 4),
+        "volume": round(min(log1p(selection_inputs.volume) / 10, 1.0) * heuristics.selection_volume_weight, 4),
         "openInterest": round(
-            min(log1p(open_interest_value) / 8, 1.0) * heuristics.selection_open_interest_weight,
+            min(log1p(selection_inputs.liquidity) / 10, 1.0) * heuristics.selection_open_interest_weight,
+            4,
+        ),
+        "eventVolume": round(
+            min(log1p(selection_inputs.event_volume) / 12, 1.0) * heuristics.selection_event_volume_weight,
             4,
         ),
         "nonZeroRatio": round(quality.nonZeroPointRatio * heuristics.selection_non_zero_ratio_weight, 4),
         "recentMovement": round(quality.recentMovement * 10 * heuristics.selection_recent_movement_weight, 4),
-        "history": round(
-            min(quality.pointCount / max(1, heuristics.selection_min_points), 1.0)
-            * heuristics.selection_history_weight,
+        "history": round(history_score * heuristics.selection_history_weight, 4),
+        "recentTrades": round(
+            min(selection_inputs.recent_trade_count / max(1, heuristics.selection_min_recent_trades), 1.0)
+            * heuristics.selection_recent_trade_weight,
+            4,
+        ),
+        "orderbook": round(
+            (1.0 if selection_inputs.has_orderbook else 0.0) * heuristics.selection_orderbook_weight,
+            4,
+        ),
+        "titleQuality": round(
+            selection_inputs.title_quality * heuristics.selection_title_quality_weight,
             4,
         ),
     }
     penalties: list[str] = []
-    score = sum(components.values())
+    score = sum(components.values()) - spread_penalty
     if not current_price_non_zero:
         score -= heuristics.selection_zero_price_penalty
         penalties.append("all_zero_price_fields")
@@ -133,6 +142,14 @@ def build_selection_debug(
         penalties.append("synthetic_only_history")
     if not quality.usableDetectorInput:
         penalties.append("weak_detector_input")
+    if selection_inputs.recent_trade_count < heuristics.selection_min_recent_trades:
+        penalties.append("low_trade_activity")
+    if selection_inputs.history_coverage_ratio < heuristics.selection_min_history_coverage:
+        penalties.append("thin_history_coverage")
+    if selection_inputs.title_quality < 0.35:
+        penalties.append("weak_title_specificity")
+    if spread_penalty > 0:
+        penalties.append("wide_spread")
 
     reasons = []
     if current_price_non_zero:
@@ -143,6 +160,14 @@ def build_selection_debug(
         reasons.append("recent_movement_present")
     if quality.nonZeroPointRatio >= heuristics.selection_min_non_zero_ratio:
         reasons.append("non_zero_ratio_above_minimum")
+    if selection_inputs.recent_trade_count >= heuristics.selection_min_recent_trades:
+        reasons.append("recent_trade_activity")
+    if selection_inputs.has_orderbook:
+        reasons.append("orderbook_present")
+    if selection_inputs.history_coverage_ratio >= heuristics.selection_min_history_coverage:
+        reasons.append("history_coverage_above_minimum")
+    if selection_inputs.title_quality >= 0.45:
+        reasons.append("interpretable_title")
 
     return SelectionDebugInfo(
         score=round(score, 4),
@@ -155,25 +180,14 @@ def build_selection_debug(
 
 
 def score_prefetch_candidate(
-    raw_market: KalshiMarket,
+    prefetch_inputs: ProviderSelectionInputs,
     heuristics: HeuristicConfig,
 ) -> float:
-    volume_value = _float_value(raw_market.get("volume_fp"))
-    open_interest_value = _float_value(raw_market.get("open_interest_fp"))
-    non_zero_price_fields = sum(
-        1
-        for field in (
-            "last_price_dollars",
-            "previous_price_dollars",
-            "yes_bid_dollars",
-            "yes_ask_dollars",
-        )
-        if _float_value(raw_market.get(field)) > 0
-    )
     score = (
-        min(log1p(volume_value) / 8, 1.0) * heuristics.selection_volume_weight
-        + min(log1p(open_interest_value) / 8, 1.0) * heuristics.selection_open_interest_weight
-        + min(non_zero_price_fields / 2, 1.0) * 0.35
+        min(log1p(prefetch_inputs.volume) / 10, 1.0) * heuristics.selection_volume_weight
+        + min(log1p(prefetch_inputs.liquidity) / 10, 1.0) * heuristics.selection_open_interest_weight
+        + min(log1p(prefetch_inputs.event_volume) / 12, 1.0) * heuristics.selection_event_volume_weight
+        + prefetch_inputs.title_quality * heuristics.selection_title_quality_weight
     )
     return round(score, 4)
 
@@ -237,12 +251,37 @@ def build_validation_market_options(
                 title=context.normalized_market.title,
                 status=context.normalized_market.status.value,
                 pool=context.pool,  # type: ignore[arg-type]
+                eventId=context.normalized_market.provider_event_ticker or None,
+                eventTitle=_event_title(context),
                 score=context.selection_debug.score,
                 selected=context.selection_debug.selected,
                 knownGood=context.normalized_market.id in known_good,
             )
         )
     return options
+
+
+def build_event_options(contexts: list[MarketCandidateContext]) -> list[HeuristicEventOption]:
+    grouped: dict[str, list[MarketCandidateContext]] = {}
+    for context in contexts:
+        event_id = context.normalized_market.provider_event_ticker or context.normalized_market.id
+        grouped.setdefault(event_id, []).append(context)
+
+    events: list[HeuristicEventOption] = []
+    for event_id, items in grouped.items():
+        ranked_items = sorted(items, key=lambda item: item.selection_debug.score, reverse=True)
+        representative = ranked_items[0]
+        events.append(
+            HeuristicEventOption(
+                eventId=event_id,
+                title=_event_title(representative) or representative.normalized_market.title,
+                status=representative.normalized_market.status.value,
+                pool=representative.pool,  # type: ignore[arg-type]
+                score=round(sum(item.selection_debug.score for item in ranked_items[:2]) / min(len(ranked_items), 2), 4),
+                marketCount=len(items),
+            )
+        )
+    return sorted(events, key=lambda item: item.score, reverse=True)
 
 
 def build_history_summary(history: list[NormalizedHistoryPoint], source: str) -> HistorySummary:
@@ -387,11 +426,16 @@ def evaluate_market_context(
 
 def ensure_minimum_history(
     market: NormalizedMarket,
-    raw_market: KalshiMarket,
+    raw_market: dict[str, Any],
     points: list[NormalizedHistoryPoint],
 ) -> list[NormalizedHistoryPoint]:
     if len(points) >= 2:
         return points
+
+    latest_timestamp = _coerce_timestamp(
+        raw_market.get("updated_time") or raw_market.get("end_time") or raw_market.get("close_time"),
+        market.closes_at,
+    )
 
     synthetic = [
         NormalizedHistoryPoint(
@@ -407,7 +451,7 @@ def ensure_minimum_history(
         ),
         NormalizedHistoryPoint(
             market_id=market.id,
-            timestamp=raw_market.get("updated_time", market.closes_at),
+            timestamp=latest_timestamp,
             probability=market.current_probability,
             yes_bid=None,
             yes_ask=None,
@@ -420,7 +464,15 @@ def ensure_minimum_history(
     return sorted(points + synthetic, key=lambda item: item.timestamp)
 
 
-def _float_value(value: str | None) -> float:
-    if value is None or value == "":
-        return 0.0
-    return float(value)
+def _event_title(context: MarketCandidateContext) -> str | None:
+    metadata = context.normalized_market.metadata
+    event_title = metadata.get("event_title")
+    return str(event_title) if event_title else None
+
+
+def _coerce_timestamp(value: Any, fallback: str) -> str:
+    if value is None:
+        return fallback
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(int(value), tz=UTC).isoformat().replace("+00:00", "Z")
+    return str(value)
