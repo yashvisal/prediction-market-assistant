@@ -66,7 +66,7 @@ class Settings:
     aws_secret_access_key: str
     s3_bucket: str
     s3_prefix: str
-    dome_api_key: str
+    dome_api_key: str | None
     dome_api_base_url: str
     tracked_market_limit: int
     historical_market_limit: int
@@ -88,7 +88,7 @@ class Settings:
 def get_settings() -> Settings:
     cors = os.getenv("BACKEND_CORS_ORIGINS", "http://localhost:3000")
     publishable = _get_optional("SUPABASE_PUBLISHABLE_KEY") or _get_optional("SUPABASE_ANON_KEY")
-    dome_api_key = _get_required("DOME_API_KEY")
+    dome_api_key = _get_optional("DOME_API_KEY")
 
     return Settings(
         backend_cors_origins=tuple(origin.strip() for origin in cors.split(",") if origin.strip()),
@@ -102,7 +102,7 @@ def get_settings() -> Settings:
         s3_bucket=_get_required("S3_BUCKET"),
         s3_prefix=_get_optional("S3_PREFIX", "dev/") or "dev/",
         dome_api_key=dome_api_key,
-        dome_api_base_url=_get_required("DOME_API_BASE_URL").rstrip("/"),
+        dome_api_base_url=(_get_optional("DOME_API_BASE_URL", "https://api.domeapi.io/v1") or "https://api.domeapi.io/v1").rstrip("/"),
         tracked_market_limit=_get_int("TRACKED_MARKET_LIMIT", 12),
         historical_market_limit=_get_int("HISTORICAL_MARKET_LIMIT", 6),
         sync_interval_seconds=_get_int("SYNC_INTERVAL_SECONDS", 300),
