@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 import requests
+from dotenv import load_dotenv
 
 from app.models.prediction_hunt import (
     PredictionHuntCandle,
@@ -54,6 +57,10 @@ class _ApiResult:
 _CACHE: dict[str, tuple[float, _ApiResult]] = {}
 _THROTTLE_LOCK = threading.Lock()
 _NEXT_REQUEST_AT = 0.0
+LOGGER = logging.getLogger(__name__)
+
+ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
+load_dotenv(ENV_PATH, override=False)
 
 
 class PredictionHuntClient:
@@ -107,12 +114,11 @@ class PredictionHuntClient:
         *,
         q: str | None = None,
         polymarket_key: str | None = None,
-        kalshi_key: str | None = None,
     ) -> _ApiResult:
-        params = {"q": q, "polymarket_key": polymarket_key, "kalshi_key": kalshi_key}
+        params = {"q": q, "polymarket_key": polymarket_key}
         provided = [value for value in params.values() if value]
         if len(provided) != 1:
-            raise ValueError("Provide exactly one of q, polymarket_key, or kalshi_key.")
+            raise ValueError("Provide exactly one of q or polymarket_key.")
         clean_params = {key: value for key, value in params.items() if value}
         return self._get("/matching-markets", params=clean_params)
 
@@ -180,6 +186,11 @@ class PredictionHuntClient:
         try:
             response.raise_for_status()
         except requests.HTTPError as exc:
+            LOGGER.warning(
+                "prediction_hunt_upstream_error path=%s status=%s",
+                path,
+                response.status_code,
+            )
             if response.status_code == 429 and cached:
                 return cached[1]
             raise PredictionHuntUpstreamError(
@@ -252,12 +263,10 @@ def get_prediction_hunt_matching_markets(
     *,
     q: str | None = None,
     polymarket_key: str | None = None,
-    kalshi_key: str | None = None,
 ) -> PredictionHuntMatchingMarketsResponse:
     result = _client().get_matching_markets(
         q=q,
         polymarket_key=polymarket_key,
-        kalshi_key=kalshi_key,
     )
     payload = result.payload
     events = [_to_matching_event(item) for item in payload.get("events", [])]
