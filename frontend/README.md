@@ -1,21 +1,31 @@
-# Next.js template
+# Prediction Market Assistant Frontend
 
-This is a Next.js template with shadcn/ui.
+Next.js app for the dashboard, market gallery, and market workspace.
 
-## Adding components
+## Current Data Story
 
-To add components to your app, run the following command:
+During the plumbing stage, the frontend reads its core data from the backend market contract:
+
+- `GET /api/dashboard`
+- `GET /api/markets`
+- `GET /api/markets/{market_id}`
+- `GET /api/markets/{market_id}/events`
+
+The only active provider-specific internal surface is the Prediction Hunt desk:
+
+- `frontend/app/(main)/(internal)/providers/prediction-hunt/page.tsx`
+
+## Environment
+
+Create `frontend/.env.local` with:
 
 ```bash
-npx shadcn@latest add button
+PREDICTION_MARKET_API_BASE_URL=http://localhost:8000
 ```
 
-This will place the ui components in the `components` directory.
+## Local Dev
 
-## Using components
-
-To use the components in your app, import them as follows:
-
-```tsx
-import { Button } from "@/components/ui/button";
+```bash
+pnpm install
+pnpm dev
 ```

@@ -1,118 +1,148 @@
 from __future__ import annotations
 
-import json
+import logging
 from datetime import UTC, datetime
-from functools import lru_cache
-from threading import Lock
-from uuid import uuid4
 
-from app.config import Settings, get_settings
 from app.data.mock_markets import get_market as get_mock_market
 from app.data.mock_markets import get_market_events as get_mock_market_events
 from app.data.mock_markets import list_markets as list_mock_markets
-from app.models.evaluation import HeuristicEvaluationResponse, HeuristicMarketListResponse
 from app.models.market import (
     DashboardSnapshotResponse,
+    Entity,
+    EntityType,
     MarketCategory,
     MarketDetail,
+    MarketEvent,
     MarketEventFeedItem,
     MarketStatus,
+    MovementDirection,
+    Signal,
+    SignalSourceType,
 )
-from app.services.artifacts import ArtifactStore
-from app.services.events.detector import detect_event_windows, revision_hash, stable_event_id
-from app.services.heuristics import (
-    HeuristicConfig,
-    HeuristicOverrides,
-    apply_heuristic_overrides,
-    heuristics_from_settings,
+from app.models.prediction_hunt import PredictionHuntCandle, PredictionHuntMarketSummary
+from app.services.prediction_hunt import (
+    PredictionHuntNotConfiguredError,
+    PredictionHuntUpstreamError,
+    clear_prediction_hunt_http_cache,
+    get_prediction_hunt_markets,
+    get_prediction_hunt_price_history,
 )
-from app.services.dome_markets import DomeMarketNotFoundError, get_dome_market_seed, list_dome_market_seeds
-from app.services.market_analysis import (
-    build_event_options,
-    MarketCandidateContext,
-    build_candidate_context,
-    build_validation_market_options,
-    evaluate_market_context,
-    rank_candidate_contexts,
-    score_prefetch_candidate,
-)
-from app.services.persistence import MarketStore
-from app.services.provider_types import MarketSeed
-from app.services.signals.attach import attach_signals
 
+LOGGER = logging.getLogger(__name__)
+CORE_MARKETS_LIMIT = 60
+DASHBOARD_MARKET_LIMIT = 12
+DASHBOARD_EVENT_MARKET_LIMIT = 6
+DEFAULT_TIMESTAMP = "1970-01-01T00:00:00Z"
+MIN_EVENT_MOVEMENT = 0.01
 
-_SYNC_LOCK = Lock()
-_LAST_SYNC_AT: datetime | None = None
-
-
-@lru_cache(maxsize=1)
-def _settings() -> Settings:
-    return get_settings()
-
-
-@lru_cache(maxsize=1)
-def _store() -> MarketStore:
-    return MarketStore(_settings())
-
-
-@lru_cache(maxsize=1)
-def _artifact_store() -> ArtifactStore:
-    return ArtifactStore(_settings())
+# Per-request cache for raw market data
+_raw_markets_cache: dict[str, PredictionHuntMarketSummary] = {}
 
 
 def initialize_runtime() -> None:
-    _store().ensure_schema()
+    LOGGER.info("prediction_hunt_runtime_ready")
 
 
 def list_market_summaries(
     *, status: MarketStatus | None = None, category: MarketCategory | None = None
-):
-    _ensure_runtime_data()
-    try:
-        items = _store().list_market_details(status=status, category=category)
-        if items or _store().has_markets():
-            return items
-    except Exception:
-        pass
-    return list_mock_markets(status=status, category=category)
+) -> list[MarketDetail]:
+    markets = _load_prediction_hunt_markets()
+    if markets is None:
+        LOGGER.warning(
+            "prediction_hunt_core_fallback target=markets status=%s category=%s",
+            status.value if status else "all",
+            category.value if category else "all",
+        )
+        return list_mock_markets(status=status, category=category)
+
+    return [
+        market
+        for market in markets
+        if (status is None or market.status == status) and (category is None or market.category == category)
+    ]
 
 
 def get_market_detail(market_id: str) -> MarketDetail | None:
-    _ensure_runtime_data()
-    try:
-        market = _store().get_market_detail(market_id)
-        if market:
-            return market
-    except Exception:
-        pass
-    return get_mock_market(market_id)
+    markets = _load_prediction_hunt_markets()
+    if markets is None:
+        LOGGER.warning("prediction_hunt_core_fallback target=market_detail market_id=%s", market_id)
+        return get_mock_market(market_id)
+
+    return next((market for market in markets if market.id == market_id), None)
 
 
-def list_market_events(market_id: str):
-    _ensure_runtime_data()
+def list_market_events(
+    market_id: str, *, market: MarketDetail | None = None, raw_market: PredictionHuntMarketSummary | None = None
+) -> list[MarketEvent]:
+    """Resolve events for a market. Pass ``market`` / ``raw_market`` when already loaded to avoid duplicate fetches."""
+    if market is not None and raw_market is not None:
+        try:
+            return _load_prediction_hunt_events_for_market(market=market, raw_market=raw_market)
+        except (PredictionHuntNotConfiguredError, PredictionHuntUpstreamError) as exc:
+            LOGGER.warning(
+                "prediction_hunt_core_event_fallback market_id=%s reason=%s",
+                market_id,
+                str(exc),
+            )
+            return get_mock_market_events(market_id) if get_mock_market(market_id) else []
+
+    ph_list = _load_prediction_hunt_markets()
+    if ph_list is None:
+        if get_mock_market(market_id):
+            return get_mock_market_events(market_id)
+        return []
+
+    detail = market if market is not None else next((m for m in ph_list if m.id == market_id), None)
+    if detail is None:
+        return []
+
+    if raw_market is not None:
+        try:
+            return _load_prediction_hunt_events_for_market(market=detail, raw_market=raw_market)
+        except (PredictionHuntNotConfiguredError, PredictionHuntUpstreamError) as exc:
+            LOGGER.warning(
+                "prediction_hunt_core_event_fallback market_id=%s reason=%s",
+                market_id,
+                str(exc),
+            )
+            return get_mock_market_events(market_id) if get_mock_market(market_id) else []
+
     try:
-        events = _store().list_market_events(market_id)
-        if events or _store().get_market_detail(market_id) is not None:
-            return events
-    except Exception:
-        pass
-    return get_mock_market_events(market_id)
+        resolved_raw = _find_prediction_hunt_market(market_id)
+        if resolved_raw is None:
+            LOGGER.warning("prediction_hunt_event_skip market_id=%s reason=market_not_in_core_set", market_id)
+            return []
+        return _load_prediction_hunt_events_for_market(market=detail, raw_market=resolved_raw)
+    except (PredictionHuntNotConfiguredError, PredictionHuntUpstreamError) as exc:
+        LOGGER.warning(
+            "prediction_hunt_core_event_fallback market_id=%s reason=%s",
+            market_id,
+            str(exc),
+        )
+        return get_mock_market_events(market_id) if get_mock_market(market_id) else []
 
 
 def get_dashboard_snapshot() -> DashboardSnapshotResponse:
-    _ensure_runtime_data()
-    try:
-        snapshot = _store().get_dashboard_snapshot()
-        if snapshot.activeMarkets or snapshot.topEvents or _store().has_markets():
-            return snapshot
-    except Exception:
-        pass
+    bundle = _fetch_prediction_hunt_markets_bundle()
+    if bundle is None:
+        LOGGER.warning(
+            "prediction_hunt_core_fallback target=dashboard status=%s category=%s",
+            MarketStatus.OPEN.value,
+            "all",
+        )
+        markets = list_mock_markets(status=MarketStatus.OPEN)
+        raw_by_id: dict[str, PredictionHuntMarketSummary] = {}
+    else:
+        detail_list, raw_by_id = bundle
+        markets = [m for m in detail_list if m.status == MarketStatus.OPEN]
 
-    markets = list_market_summaries()
-    events = []
-    for market in markets:
-        for event in list_market_events(market.id):
-            events.append(
+    active_markets = markets[:DASHBOARD_MARKET_LIMIT]
+
+    top_events: list[MarketEventFeedItem] = []
+    for market in active_markets[:DASHBOARD_EVENT_MARKET_LIMIT]:
+        raw = raw_by_id.get(market.id)
+        for event in list_market_events(market.id, market=market, raw_market=raw):
+            top_events.append(
                 MarketEventFeedItem(
                     **event.model_dump(),
                     marketTitle=market.title,
@@ -120,338 +150,246 @@ def get_dashboard_snapshot() -> DashboardSnapshotResponse:
                     marketStatus=market.status,
                 )
             )
-    top_events = sorted(events, key=lambda item: abs(item.movementPercent), reverse=True)[:4]
-    return DashboardSnapshotResponse(
-        activeMarkets=[market for market in markets if market.status == MarketStatus.OPEN],
-        topEvents=top_events,
-    )
+
+    top_events.sort(key=lambda item: abs(item.movementPercent), reverse=True)
+    return DashboardSnapshotResponse(activeMarkets=active_markets, topEvents=top_events[:4])
 
 
-def list_heuristic_market_options() -> HeuristicMarketListResponse:
-    heuristics = heuristics_from_settings(_settings())
-    ranked = _load_ranked_candidate_contexts(heuristics)
-    return HeuristicMarketListResponse(
-        items=build_validation_market_options(ranked, heuristics),
-        events=build_event_options(ranked),
-    )
+def _fetch_prediction_hunt_markets_bundle() -> (
+    tuple[list[MarketDetail], dict[str, PredictionHuntMarketSummary]] | None
+):
+    """Single upstream /markets fetch producing mapped details plus raw rows keyed by market id."""
+    try:
+        response = get_prediction_hunt_markets(limit=CORE_MARKETS_LIMIT, status="active")
+    except PredictionHuntNotConfiguredError:
+        clear_prediction_hunt_http_cache()
+        _raw_markets_cache.clear()
+        return None
+    except PredictionHuntUpstreamError as exc:
+        LOGGER.warning("prediction_hunt_market_load_failed detail=%s", exc.detail)
+        clear_prediction_hunt_http_cache()
+        _raw_markets_cache.clear()
+        return None
 
-
-def evaluate_market_heuristics(
-    market_id: str,
-    overrides: HeuristicOverrides | None = None,
-) -> HeuristicEvaluationResponse:
-    settings = _settings()
-    heuristics = apply_heuristic_overrides(heuristics_from_settings(settings), overrides)
-    ranked_contexts = _load_ranked_candidate_contexts(heuristics)
-    validation_markets = build_validation_market_options(ranked_contexts, heuristics)
-    context = next((item for item in ranked_contexts if item.normalized_market.id == market_id), None)
-    if context is None:
-        context = _load_market_context_by_id(market_id, heuristics)
-        if context is None:
-            raise KeyError(f"Market not found for heuristic evaluation: {market_id}")
-    return evaluate_market_context(context=context, heuristics=heuristics, validation_markets=validation_markets)
-
-
-def _ensure_runtime_data() -> None:
-    global _LAST_SYNC_AT
-
-    settings = _settings()
-    if not settings.persistence_enabled:
-        return
-
-    now = datetime.now(UTC)
-    if _LAST_SYNC_AT and (now - _LAST_SYNC_AT).total_seconds() < settings.sync_interval_seconds:
-        return
-
-    with _SYNC_LOCK:
-        if _LAST_SYNC_AT and (datetime.now(UTC) - _LAST_SYNC_AT).total_seconds() < settings.sync_interval_seconds:
-            return
-        _sync_pipeline()
-        _LAST_SYNC_AT = datetime.now(UTC)
-
-
-def _sync_pipeline() -> None:
-    heuristics = heuristics_from_settings(_settings())
-    store = _store()
-    artifact_store = _artifact_store()
-    artifacts = []
-    research_runs = []
-
-    for context in _load_selected_candidate_contexts(heuristics):
-        market_artifact = artifact_store.put_json(
-            owner_type="market",
-            owner_id=context.normalized_market.id,
-            artifact_type="metadata",
-            payload={
-                "market": context.bundle.raw_market,
-                "event": context.bundle.raw_event,
-            },
-            captured_at=datetime.now(UTC),
-            source_url=context.bundle.source_url,
-            metadata={"provider": "dome"},
-        )
-        history_artifact = artifact_store.put_json(
-            owner_type="market",
-            owner_id=context.normalized_market.id,
-            artifact_type="candlesticks",
-            payload=context.bundle.history_payload,
-            captured_at=datetime.now(UTC),
-            source_url=context.bundle.source_url,
-            metadata={"provider": "dome", "history_source": context.bundle.history_source},
-        )
-        artifacts.extend([market_artifact.record, history_artifact.record])
-
-        event_windows = detect_event_windows(context.normalized_market, context.history, heuristics)
-        event_rows = []
-        signals_by_event: dict[str, list[dict[str, object]]] = {}
-        docs_by_event = {}
-        last_event_at = None
-
-        for window in event_windows:
-            event_id = stable_event_id(window)
-            signals, documents, entities, routing, _candidates = attach_signals(
-                market=context.normalized_market,
-                event=window,
-                history=context.history,
-                event_id=event_id,
-                heuristics=heuristics,
+    raw_by_id: dict[str, PredictionHuntMarketSummary] = {}
+    _raw_markets_cache.clear()
+    mapped: list[MarketDetail] = []
+    for raw_market in response.markets:
+        raw_by_id[raw_market.marketId] = raw_market
+        _raw_markets_cache[raw_market.marketId] = raw_market
+        try:
+            mapped.append(_map_prediction_hunt_market(raw_market))
+        except Exception:
+            LOGGER.exception(
+                "prediction_hunt_market_mapping_failed market_id=%s platform=%s",
+                raw_market.marketId,
+                raw_market.platform,
             )
-            docs_by_event[event_id] = documents
-            signals_by_event[event_id] = [
-                {
-                    "id": signal.id,
-                    "event_id": event_id,
-                    "document_id": _match_document_id(signal.url, signal.title, documents),
-                    "title": signal.title,
-                    "source": signal.source,
-                    "source_type": signal.sourceType.value,
-                    "url": signal.url,
-                    "published_at": signal.publishedAt,
-                    "snippet": signal.snippet,
-                    "relevance_score": signal.relevanceScore,
-                    "entities_json": _json(signal.entities),
-                }
-                for signal in signals
-            ]
-            event_rows.append(
-                {
-                    "id": event_id,
-                    "market_id": context.normalized_market.id,
-                    "title": window.title,
-                    "start_time": window.start_time,
-                    "end_time": window.end_time,
-                    "probability_before": window.probability_before,
-                    "probability_after": window.probability_after,
-                    "movement_percent": window.movement_percent,
-                    "direction": window.direction.value,
-                    "summary": window.summary,
-                    "entities_json": _json(entities),
-                    "related_events_json": "[]",
-                    "detector_version": "detector-v1",
-                    "revision_hash": revision_hash(window),
-                    "debug_payload": _json(window.debug_payload),
-                }
-            )
-            research_runs.append(
-                {
-                    "id": f"run-{uuid4()}",
-                    "market_id": context.normalized_market.id,
-                    "event_id": event_id,
-                    "decision": routing["decision"],
-                    "status": "completed",
-                    "details": _json(routing),
-                }
-            )
-            last_event_at = max(last_event_at or window.end_time, window.end_time)
-
-        market_row = _market_row(context=context, last_event_at=last_event_at, event_count=len(event_rows))
-        store.upsert_markets([market_row])
-        store.replace_time_series(context.normalized_market.id, [_history_row(point) for point in context.history])
-        store.replace_market_events(context.normalized_market.id, event_rows, signals_by_event, docs_by_event)
-
-    store.upsert_artifacts(artifacts)
-    store.record_research_runs(research_runs)
-
-def _history_row(point) -> dict[str, object]:
-    return {
-        "market_id": point.market_id,
-        "timestamp": point.timestamp,
-        "probability": point.probability,
-        "yes_bid": point.yes_bid,
-        "yes_ask": point.yes_ask,
-        "volume": point.volume,
-        "open_interest": point.open_interest,
-        "source": point.source,
-        "metadata": _json(point.metadata),
-    }
+    LOGGER.info("prediction_hunt_market_load_success count=%s", len(mapped))
+    return mapped, raw_by_id
 
 
-def _json(value: object) -> str:
-    if isinstance(value, list):
-        return json.dumps(
-            [item.model_dump() if hasattr(item, "model_dump") else item for item in value],
-            sort_keys=True,
-        )
-    if hasattr(value, "model_dump"):
-        return json.dumps(value.model_dump(), sort_keys=True)
-    return json.dumps(value, sort_keys=True)
-
-def _match_document_id(url: str, title: str, documents) -> str | None:
-    for document in documents:
-        if document.url == url and document.title == title:
-            return document.id
-    return documents[0].id if documents else None
+def _load_prediction_hunt_markets() -> list[MarketDetail] | None:
+    bundle = _fetch_prediction_hunt_markets_bundle()
+    return None if bundle is None else bundle[0]
 
 
-def _shortlist_market_seeds(
-    seeds: list[MarketSeed],
+def _find_prediction_hunt_market(market_id: str, raw_market: PredictionHuntMarketSummary | None = None) -> PredictionHuntMarketSummary | None:
+    # If raw_market is provided, return it directly
+    if raw_market is not None:
+        return raw_market
+
+    # Otherwise, check the cache
+    return _raw_markets_cache.get(market_id)
+
+
+def _load_prediction_hunt_events_for_market(
     *,
-    shortlist_limit: int,
-    heuristics: HeuristicConfig,
-) -> list[MarketSeed]:
-    if len(seeds) <= shortlist_limit:
-        return seeds
-
-    pinned_tickers = set(heuristics.validation_market_tickers)
-    ranked = sorted(seeds, key=lambda seed: score_prefetch_candidate(seed.prefetch_inputs, heuristics), reverse=True)
-    shortlisted: list[MarketSeed] = []
-    seen_tickers: set[str] = set()
-
-    for seed in seeds:
-        ticker = str(seed.raw_market.get("market_slug", ""))
-        if ticker in pinned_tickers and ticker not in seen_tickers:
-            shortlisted.append(seed)
-            seen_tickers.add(ticker)
-
-    for seed in ranked:
-        ticker = str(seed.raw_market.get("market_slug", ""))
-        if ticker and ticker not in seen_tickers:
-            shortlisted.append(seed)
-            seen_tickers.add(ticker)
-        if len(shortlisted) >= shortlist_limit:
-            break
-
-    return shortlisted
-
-
-def _history_shortlist_limit(limit: int, heuristics: HeuristicConfig) -> int:
-    shortlist_multiplier = max(1, (heuristics.selection_candidate_pool_multiplier + 1) // 2)
-    return max(limit, limit * shortlist_multiplier)
-
-
-def _event_seed_limit(limit: int, heuristics: HeuristicConfig) -> int:
-    return max(4, (limit * heuristics.selection_candidate_pool_multiplier + 2) // 3)
-
-
-def _build_candidate_contexts(
-    seeds: list[MarketSeed],
-    *,
-    limit: int,
-    heuristics: HeuristicConfig,
-) -> list[MarketCandidateContext]:
-    shortlisted = _shortlist_market_seeds(
-        seeds,
-        shortlist_limit=_history_shortlist_limit(limit, heuristics),
-        heuristics=heuristics,
+    market: MarketDetail,
+    raw_market: PredictionHuntMarketSummary,
+) -> list[MarketEvent]:
+    history = get_prediction_hunt_price_history(
+        platform=raw_market.platform,
+        market_id=market.id,
+        interval="1h",
     )
+    event = _build_recent_move_event(market=market, platform=raw_market.platform, candles=history.candles)
+    return [event] if event else []
+
+
+def _map_prediction_hunt_market(raw_market: PredictionHuntMarketSummary) -> MarketDetail:
+    current_probability = _current_probability(raw_market)
+    previous_close = _previous_close(raw_market, current_probability)
+    category = _map_category(raw_market.category, raw_market.title)
+    closes_at = raw_market.expirationDate or DEFAULT_TIMESTAMP
+    status = _map_status(raw_market.status)
+    description_bits = [
+        f"Prediction Hunt market on platform={raw_market.platform}.",
+        "This is the current plumbing-stage provider mapping.",
+    ]
+    if raw_market.category:
+        description_bits.append(f"Provider category: {raw_market.category}.")
+    if raw_market.sourceUrl:
+        description_bits.append("Open the provider market for full source context.")
+
+    return MarketDetail(
+        id=raw_market.marketId,
+        title=raw_market.title,
+        description=" ".join(description_bits),
+        status=status,
+        category=category,
+        currentProbability=current_probability,
+        previousClose=previous_close,
+        volume=(raw_market.price.volume or 0),
+        liquidity=int(round(raw_market.price.liquidity or 0)),
+        createdAt=closes_at,
+        closesAt=closes_at,
+        resolvedAt=closes_at if status == MarketStatus.RESOLVED else None,
+        resolution=None,
+        eventCount=0,
+        lastEventAt=None,
+    )
+
+
+def _build_recent_move_event(
+    *,
+    market: MarketDetail,
+    platform: str,
+    candles: list[PredictionHuntCandle],
+) -> MarketEvent | None:
+    priced_candles = [(candle, _candle_probability(candle)) for candle in candles]
+    usable = [(candle, probability) for candle, probability in priced_candles if probability is not None]
+    if len(usable) < 2:
+        LOGGER.info("prediction_hunt_event_skip market_id=%s reason=insufficient_history", market.id)
+        return None
+
+    start_candle, start_probability = usable[0]
+    end_candle, end_probability = usable[-1]
+    assert start_probability is not None
+    assert end_probability is not None
+
+    movement = round(abs(end_probability - start_probability), 4)
+    if movement < MIN_EVENT_MOVEMENT:
+        LOGGER.info(
+            "prediction_hunt_event_skip market_id=%s reason=movement_below_threshold movement=%s",
+            market.id,
+            movement,
+        )
+        return None
+
+    direction = MovementDirection.UP if end_probability >= start_probability else MovementDirection.DOWN
+    summary = (
+        "Synthetic recent-move event derived from Prediction Hunt price history during the plumbing stage."
+    )
+    return MarketEvent(
+        id=f"{market.id}:recent-move",
+        marketId=market.id,
+        title="Recent market movement",
+        startTime=start_candle.timestamp,
+        endTime=end_candle.timestamp,
+        probabilityBefore=start_probability,
+        probabilityAfter=end_probability,
+        movementPercent=movement,
+        direction=direction,
+        signals=_build_market_signals(market, platform),
+        entities=[],
+        relatedEvents=[],
+        summary=summary,
+    )
+
+
+def _build_market_signals(market: MarketDetail, platform: str) -> list[Signal]:
+    signal_id = f"{market.id}:provider-context"
+    entity_id = f"{market.id}:platform"
     return [
-        build_candidate_context(
-            seed=seed,
-            heuristics=heuristics,
+        Signal(
+            id=signal_id,
+            title="Prediction Hunt provider context",
+            source="Prediction Hunt",
+            sourceType=SignalSourceType.ANALYSIS,
+            url="#",
+            publishedAt=datetime.now(UTC).isoformat(),
+            snippet=(
+                f"Minimal provider-backed context for {market.title}. "
+                f"Platform={platform}, current probability={market.currentProbability:.0%}."
+            ),
+            relevanceScore=0.5,
+            entities=[
+                Entity(
+                    id=entity_id,
+                    name=platform.title(),
+                    type=EntityType.ORGANIZATION,
+                )
+            ],
         )
-        for seed in shortlisted
     ]
 
 
-def _load_selected_candidate_contexts(heuristics: HeuristicConfig) -> list[MarketCandidateContext]:
-    open_contexts = _build_candidate_contexts(
-        list_dome_market_seeds(_event_seed_limit(heuristics.tracked_market_limit, heuristics), status="open"),
-        limit=heuristics.tracked_market_limit,
-        heuristics=heuristics,
-    )
-    historical_contexts = _build_candidate_contexts(
-        list_dome_market_seeds(_event_seed_limit(heuristics.historical_market_limit, heuristics), status="closed"),
-        limit=heuristics.historical_market_limit,
-        heuristics=heuristics,
-    )
-
-    _ranked_open, selected_open = rank_candidate_contexts(
-        open_contexts,
-        limit=heuristics.tracked_market_limit,
-        validation_market_tickers=heuristics.validation_market_tickers,
-    )
-    _ranked_historical, selected_historical = rank_candidate_contexts(
-        historical_contexts,
-        limit=heuristics.historical_market_limit,
-        validation_market_tickers=heuristics.validation_market_tickers,
-    )
-    return selected_open + selected_historical
+def _map_status(status: str) -> MarketStatus:
+    normalized = status.strip().lower()
+    if normalized == "active":
+        return MarketStatus.OPEN
+    if normalized in {"resolved", "settled"}:
+        return MarketStatus.RESOLVED
+    return MarketStatus.CLOSED
 
 
-def _load_ranked_candidate_contexts(heuristics: HeuristicConfig) -> list[MarketCandidateContext]:
-    contexts = _build_candidate_contexts(
-        list_dome_market_seeds(_event_seed_limit(heuristics.tracked_market_limit, heuristics), status="open"),
-        limit=heuristics.tracked_market_limit,
-        heuristics=heuristics,
-    ) + _build_candidate_contexts(
-        list_dome_market_seeds(_event_seed_limit(heuristics.historical_market_limit, heuristics), status="closed"),
-        limit=heuristics.historical_market_limit,
-        heuristics=heuristics,
-    )
-    ranked, _selected = rank_candidate_contexts(
-        contexts,
-        limit=heuristics.tracked_market_limit + heuristics.historical_market_limit,
-        validation_market_tickers=heuristics.validation_market_tickers,
-    )
-    return ranked
+def _map_category(raw_category: str | None, title: str) -> MarketCategory:
+    normalized = f"{raw_category or ''} {title}".lower()
+    if any(token in normalized for token in ("election", "president", "senate", "congress", "politic")):
+        return MarketCategory.POLITICS
+    if any(token in normalized for token in ("bitcoin", "crypto", "ethereum", "solana", "token")):
+        return MarketCategory.CRYPTO
+    if any(token in normalized for token in ("soccer", "nba", "nfl", "mlb", "sports", "cup", "championship")):
+        return MarketCategory.SPORTS
+    if any(token in normalized for token in ("climate", "weather", "temperature", "hurricane")):
+        return MarketCategory.CLIMATE
+    if any(token in normalized for token in ("war", "china", "russia", "ukraine", "israel", "gaza")):
+        return MarketCategory.GEOPOLITICS
+    if any(token in normalized for token in ("ai", "technology", "tech", "openai", "apple", "tesla")):
+        return MarketCategory.TECHNOLOGY
+    if any(token in normalized for token in ("science", "space", "nasa", "drug", "trial", "fda")):
+        return MarketCategory.SCIENCE
+    return MarketCategory.FINANCE
 
 
-def _load_market_context_by_id(
-    market_id: str,
-    heuristics: HeuristicConfig,
-) -> MarketCandidateContext | None:
-    try:
-        seed = get_dome_market_seed(market_id)
-    except (DomeMarketNotFoundError, KeyError):
+def _first_float_or(*values: float | None) -> float | None:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
+def _current_probability(raw_market: PredictionHuntMarketSummary) -> float:
+    candidate = _first_float_or(
+        raw_market.price.lastPrice,
+        raw_market.price.yesBid,
+        raw_market.price.yesAsk,
+        _midpoint(raw_market.price.yesBid, raw_market.price.yesAsk),
+    )
+    return _clamp_probability(candidate if candidate is not None else 0.0)
+
+
+def _previous_close(raw_market: PredictionHuntMarketSummary, current_probability: float) -> float:
+    candidate = _first_float_or(
+        _midpoint(raw_market.price.yesBid, raw_market.price.yesAsk),
+        raw_market.price.yesBid,
+        raw_market.price.yesAsk,
+        current_probability,
+    )
+    return _clamp_probability(candidate if candidate is not None else 0.0)
+
+
+def _candle_probability(candle: PredictionHuntCandle) -> float | None:
+    candidate = _first_float_or(candle.close, candle.mid, _midpoint(candle.yesBid, candle.yesAsk))
+    return _clamp_probability(candidate) if candidate is not None else None
+
+
+def _midpoint(a: float | None, b: float | None) -> float | None:
+    if a is None or b is None:
         return None
-    return build_candidate_context(seed=seed, heuristics=heuristics)
+    return (a + b) / 2
 
 
-def _market_row(
-    *,
-    context: MarketCandidateContext,
-    last_event_at: str | None,
-    event_count: int,
-) -> dict[str, object]:
-    normalized_market = context.normalized_market
-    return {
-        "id": normalized_market.id,
-        "provider": normalized_market.provider,
-        "provider_market_ticker": normalized_market.provider_market_ticker,
-        "provider_event_ticker": normalized_market.provider_event_ticker,
-        "title": normalized_market.title,
-        "description": normalized_market.description,
-        "status": normalized_market.status.value,
-        "category": normalized_market.category.value,
-        "current_probability": normalized_market.current_probability,
-        "previous_close": normalized_market.previous_close,
-        "volume": normalized_market.volume,
-        "liquidity": normalized_market.liquidity,
-        "created_at": normalized_market.created_at,
-        "closes_at": normalized_market.closes_at,
-        "resolved_at": normalized_market.resolved_at,
-        "resolution": normalized_market.resolution,
-        "event_count": event_count,
-        "last_event_at": last_event_at,
-        "detail_url": normalized_market.detail_url,
-        "rules_primary": normalized_market.rules_primary,
-        "rules_secondary": normalized_market.rules_secondary,
-        "metadata": _json(
-            {
-                **normalized_market.metadata,
-                "selection_debug": context.selection_debug.model_dump(),
-                "market_quality": context.quality_summary.model_dump(),
-                "pool": context.pool,
-            }
-        ),
-    }
+def _clamp_probability(value: float) -> float:
+    return round(min(max(value, 0.0), 1.0), 4)

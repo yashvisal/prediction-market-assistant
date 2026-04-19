@@ -1,223 +1,76 @@
 ---
 name: phase three backend plan
-overview: Validate the current FastAPI scaffold against the written roadmap, then sequence the next backend work so ingestion, event detection, and signal attachment build cleanly on the contracts and routes that already exist, while reserving LangChain and LangGraph for AI-facing orchestration layers.
+overview: Use Prediction Hunt as the only active provider during the plumbing stage, simplify the backend around the existing market contract, and defer deeper provider composition, Polyrouter strategy, and richer enrichment until the contract boundary is stable.
 todos:
   - id: contract-audit
     content: Confirm contract parity and backend-heavy gate readiness across frontend repository usage, backend models, and existing routes.
     status: completed
   - id: persistence-architecture
-    content: Define the canonical persistence model with Supabase as the default hosted database, Amazon S3 for blobs, and a later decision point for any dedicated vector database.
-    status: completed
+    content: Defer persistence architecture decisions until after the Prediction Hunt plumbing stage is stable.
+    status: pending
   - id: kalshi-normalization
-    content: Plan the Kalshi ingestion layer and normalized market/history contract needed by downstream event detection.
+    content: Remove Kalshi as an active integration during plumbing and keep any remaining references limited to upstream provenance inside Prediction Hunt payloads.
     status: completed
   - id: event-detection
-    content: Plan deterministic event-window detection from normalized market history into the existing MarketEvent shape.
-    status: completed
+    content: Keep market events intentionally lightweight during plumbing, using minimal recent-move derivation rather than the final event-detection architecture.
+    status: in_progress
   - id: signal-attachment
-    content: Plan source retrieval and signal attachment around detected windows, including scoring, LangChain or LangGraph orchestration boundaries, and test seams.
-    status: completed
+    content: Defer richer signal attachment and AI orchestration until after the Prediction Hunt-only backend path is stable.
+    status: pending
 isProject: false
 ---
 
 # Backend Build Plan
 
-## Assessment
+## Current Assessment
 
-The repo is already past the earliest "introduce FastAPI" step.
+The backend should currently optimize for simplicity, contract stability, and debuggability rather than depth.
 
-- The backend scaffold exists in [backend/app/main.py](backend/app/main.py), [backend/app/api/routes.py](backend/app/api/routes.py), and [backend/app/services/markets.py](backend/app/services/markets.py).
-- The frontend is already reading through the repository boundary in [frontend/lib/repositories/markets.ts](frontend/lib/repositories/markets.ts).
-- The frontend and backend contracts are already closely aligned in [frontend/lib/market-types.ts](frontend/lib/market-types.ts) and [backend/app/models/market.py](backend/app/models/market.py).
-- The remaining missing work is not basic API wiring; it is the real backend engine under the existing contract.
+- The frontend already reads through `frontend/lib/repositories/markets.ts`.
+- The core app contract still lives in `frontend/lib/market-types.ts` and `backend/app/models/market.py`.
+- The next useful backend step is not broader provider sprawl; it is a cleaner Prediction-Hunt-only app path.
 
-Because of that, your proposed three tickets are directionally correct, but they map more closely to the "core engine" work described after the initial FastAPI scaffold rather than to the earliest Phase 3 setup.
-
-## Recommendation
-
-Treat the next implementation slice as:
-
-1. `backend/app/services/kalshi/`: ingest raw Kalshi market + history data and normalize it into the existing market contract.
-2. `backend/app/services/events/`: detect deterministic event windows from normalized historical price movement, then filter and cap them before enrichment.
-3. `backend/app/services/signals/`: retrieve candidate sources for each detected window and attach scored `Signal` records to the resulting `MarketEvent`.
-
-This is the right sequence because each step produces the input required by the next:
+## Plumbing Objective
 
 ```mermaid
 flowchart TD
-    kalshiIngest[KalshiIngest] --> normalizedHistory[NormalizedMarketAndHistory]
-    normalizedHistory --> eventDetection[EventWindowDetection]
-    eventDetection --> eventDrafts[MarketEventDrafts]
-    eventDrafts --> signalRetrieval[SignalRetrieval]
-    signalRetrieval --> enrichedEvents[MarketEventsWithSignals]
-    enrichedEvents --> apiSurface[ExistingAPIRoutesAndFrontendRepository]
+    phProvider[PredictionHuntProvider] --> phMapping[CoreMarketMapping]
+    phMapping --> appRoutes[DashboardMarketsDetailEvents]
+    appRoutes --> frontendRepo[FrontendRepositories]
+    appRoutes --> logging[LightweightLogging]
+    logging --> futurePhase[PolyrouterAndRicherWorkflowsLater]
 ```
 
+The backend plumbing stage should:
 
+- keep routes thin in `backend/app/api/routes.py`
+- keep the app-facing market contract stable
+- keep `backend/app/services/markets.py` as the single core mapping layer
+- keep `backend/app/services/prediction_hunt.py` as the provider boundary
+- add lightweight logs around mapping failures, upstream errors, and fallbacks
+- defer richer event detection, persistence, and retrieval architecture until the plumbing is stable
 
-## Kalshi Data Surface
+## What This Stage Explicitly Removes
 
-Plan from the data Kalshi actually exposes, then derive the higher-level product behavior from that.
+- Dome-specific backend routes and models
+- Kalshi-specific backend integration code
+- old heuristics, persistence, signal-attachment, and provider-exploration paths that only served the removed provider strategy
 
-- Use REST as the canonical layer for market catalog sync, historical backfill, replay, and recovery after disconnects.
-- Use Kalshi market endpoints for market metadata and filtering, and candlestick endpoints for time-series history.
-- Treat Kalshi exchange `event` objects as provider metadata and grouping, not as the same thing as our product-level `MarketEvent`.
-- Use websockets for freshness and triggering only, not as the sole source of truth for history reconstruction.
+## What This Stage Keeps
 
-Practical interpretation:
+- `backend/app/models/market.py` as the stable app contract
+- `backend/app/services/prediction_hunt.py` as the only provider-specific service
+- `backend/app/services/markets.py` as the thin app-facing mapping layer
+- internal Prediction Hunt endpoints for inspection and debugging
 
-- REST provides the inputs needed to recompute state deterministically.
-- Websocket channels provide low-latency signals that a market may need re-evaluation.
-- Our backend remains responsible for producing the final `MarketEvent` objects the UI consumes.
+## Later Work, Intentionally Deferred
 
-## Persistence And Retrieval Strategy
-
-Do not use object storage alone as the primary system of record.
-
-Recommended architecture:
-
-- Use a relational database as the canonical operational store.
-- Use object storage for immutable or large raw artifacts.
-- Prepare for vector search by keeping canonical source documents and chunk metadata in the database from day one, while deferring any dedicated vector-database decision until retrieval and indexing become a real workload.
-
-Recommended default:
-
-- Supabase as the default hosted Postgres platform.
-- Supabase Storage can support the earliest phase if needed, but Amazon S3 is the planned blob store for durable raw artifacts and larger source captures.
-- Use Supabase's Postgres foundation as the canonical source of truth for normalized data, source metadata, chunk metadata, and processing state.
-- Treat vector search as a staged capability:
-  - start with a relational-first corpus model in Supabase
-  - allow `pgvector` in Supabase as the simplest first indexing path if lightweight semantic retrieval is needed early
-  - revisit a dedicated vector database later if indexing scale, retrieval throughput, or filtering complexity materially outgrow that setup
-
-Why this is the best fit:
-
-- We need reproducible, queryable state across markets, candles, detected events, signals, and research runs.
-- Hosted infrastructure keeps operational complexity low and helps get the backend online faster than self-hosting multiple systems.
-- We will need joins, filters, idempotency, versioning, and backfills long before we need a separate specialized vector database.
-- Supabase docs explicitly position Postgres and pgvector as a practical default for AI and vector workloads, especially for simple or single-database workloads, with the option to split collections later as usage grows.
-- Amazon S3 remains valuable as a blob store referenced by database records, not as the only persistence layer.
-
-Avoid:
-
-- S3-only storage with no canonical relational index.
-- Prematurely introducing a separate vector database before the retrieval layer and corpus shape are stable.
-- A design where embeddings are introduced later without preserving chunk IDs, source versions, and provenance metadata now.
-
-What should live in Supabase Postgres:
-
-- normalized markets and market metadata
-- normalized candle or time-series records
-- detected event windows
-- signal metadata and attachment records
-- source document metadata, chunk metadata, provenance, and processing status
-- research run logs, routing decisions, and enrichment job state
-- optional embedding rows for semantic retrieval if the first retrieval pass is kept inside Supabase
-
-What should live in Amazon S3:
-
-- raw Kalshi payload archives for replay or audit
-- fetched article HTML or rendered page captures
-- extracted full-text source snapshots
-- large intermediate artifacts that are expensive to keep inline in relational tables
-
-Operational rule:
-
-- Every object-storage artifact should have a database record with checksum, source URL, capture time, parser version, and owning entity ID.
-- Every embedding should point back to a stable canonical chunk or source-document row.
-- Reproducibility depends on versioned source records, not only on stored vectors.
-
-Infrastructure decision for this phase:
-
-- Default to hosted services over self-hosting.
-- Start with Supabase as the database platform because it minimizes setup friction while still preserving a clean Postgres-based architecture.
-- Use Amazon S3 for blob storage and raw artifact retention.
-- Do not commit to a dedicated vector database yet; add that only when retrieval and indexing requirements are concrete enough to justify the extra system.
-
-## Live Data Strategy
-
-Use websocket data to wake up the system, but not to replace the deterministic pipeline.
-
-- Primary live trigger: Kalshi `ticker` channel for price, bid/ask, volume, open interest, and timestamps.
-- Secondary confirmation channel: Kalshi `trade` for actual executed trade activity.
-- Lifecycle channel: use `market_lifecycle_v2` for catalog freshness, status changes, and settlement updates.
-- Defer `orderbook_delta` to a later phase unless microstructure-aware triggers become necessary.
-
-Rule:
-
-- A websocket message should not directly trigger research.
-- It should first trigger local state updates and deterministic event-candidate evaluation.
-- Only once a candidate event window exists should the system consider enrichment or external research.
-- Do not make websockets part of the first debugging loop; get the REST ingestion and polling path working first, then layer websocket freshness triggers on top of the same normalized update interface.
-
-## Rollout Constraint
-
-Keep the first rollout intentionally narrow so debugging and quality checks stay manageable.
-
-- Start with a configurable top-`N` market subset rather than the full Kalshi universe.
-- Choose the initial subset using simple operational criteria such as status plus liquidity or volume, not opaque ranking.
-- Keep the subset size adjustable so the system can expand gradually once ingestion, detection, and enrichment look stable.
-- Build the pipeline so the same code path works for both the initial top-`N` subset and the broader market universe later.
-
-## Ticket 1: Kalshi Ingestion And Normalization
-
-Build on top of [backend/app/services/markets.py](backend/app/services/markets.py) and the existing response models in [backend/app/models/market.py](backend/app/models/market.py).
-
-Scope:
-
-- Add a provider-specific adapter under [backend/app/services/kalshi/](backend/app/services/kalshi/) for fetching market metadata and historical observations.
-- Support both live and historical Kalshi REST paths so the backend can backfill older settled markets and recent active markets through one normalized interface.
-- Introduce a platform-agnostic normalized domain shape for:
-  - market summary/detail fields already exposed by the API
-  - historical probability/time series needed for event detection
-- Lock the first-pass normalized history shape before detector implementation:
-  - `timestamp`
-  - `probability`
-  - keep the core detection input intentionally minimal even if richer candle metadata is stored alongside it
-- Normalize live websocket payloads into an internal update format that can feed incremental refresh logic without becoming the canonical store.
-- Persist both normalized records and raw-source references so the ingestion pipeline can be replayed and audited later.
-- Implement the first pass against REST plus polling before websocket ingestion becomes a required part of the runtime.
-- Scope the first pass to a configurable top-`N` tracked market set for easier debugging and cost control.
-- Keep provider logic isolated so `services/events` does not know about Kalshi response formats.
-- Preserve the current route contract in [backend/app/api/routes.py](backend/app/api/routes.py); routes should continue to depend on thin service functions, not provider code.
-
-Suggested file targets:
-
-- [backend/app/services/kalshi/client.py](backend/app/services/kalshi/client.py)
-- [backend/app/services/kalshi/normalize.py](backend/app/services/kalshi/normalize.py)
-- [backend/app/services/kalshi/types.py](backend/app/services/kalshi/types.py)
-- [backend/app/services/markets.py](backend/app/services/markets.py)
-
-Exit criteria:
-
-- A service can return normalized markets from Kalshi without changing the frontend-facing schema.
-- Historical series are available in a clean internal format for downstream event detection.
-- REST and websocket inputs can both be translated into a shared internal representation.
-- The current mock-backed endpoints have a clear swap path to real data.
-- The same ingestion run can be reproduced from persisted source artifacts and normalized records.
-- The persistence model fits a hosted Supabase plus S3 deployment from the start.
-- The detector input shape is locked early enough that event logic does not thrash around changing provider-specific candle fields.
-- The initial runtime can be validated with REST plus polling alone before websocket support is added.
-
-## Ticket 2: Event Detection And Filtering
-
-Build a deterministic event detector in [backend/app/services/events/](backend/app/services/events/) that converts normalized history into `MarketEvent` candidates matching [backend/app/models/market.py](backend/app/models/market.py), then filters those candidates into a cleaner bounded event set for enrichment.
-
-Scope:
-
-- Define explicit event-window heuristics first, rather than ranking or opaque modeling.
-- Detect windows from real history using explainable rules such as:
-  - minimum move threshold
-  - minimum persistence window
-  - merge logic for overlapping spikes
-  - direction inference from before/after movement
-- Decide explicitly whether the detector keys off traded price, bid/ask midpoint, or a hybrid fallback when candles are sparse or null.
-- Add debounce or cooldown behavior so repeated live updates do not create duplicate event windows or repeatedly trigger research.
-- Produce event drafts with `startTime`, `endTime`, `probabilityBefore`, `probabilityAfter`, `movementPercent`, and `direction`.
-- Add a post-detection filtering step before enrichment to:
-  - remove weak or noisy windows
-  - merge or collapse near-duplicate candidates
-  - cap the number of events retained per market or evaluation cycle
+- exact Polyrouter supplementation strategy
+- richer event detection from longer price history windows
+- source retrieval and signal ranking
+- persistence and replay architecture
+- grounded copilot orchestration
+- canvas mode
 - Define event idempotency rules so recomputation does not create duplicate logical events.
 - Use a stable event identity that is more robust than raw exact timestamps alone:
   - event identity should be derived from `market_id` plus normalized window boundaries and detector version
