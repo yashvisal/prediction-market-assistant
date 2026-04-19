@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from functools import lru_cache
 
 from app.data.mock_markets import get_market as get_mock_market
 from app.data.mock_markets import get_market_events as get_mock_market_events
@@ -33,6 +34,9 @@ DASHBOARD_MARKET_LIMIT = 12
 DASHBOARD_EVENT_MARKET_LIMIT = 6
 DEFAULT_TIMESTAMP = "1970-01-01T00:00:00Z"
 MIN_EVENT_MOVEMENT = 0.01
+
+# Per-request cache for raw market data
+_raw_markets_cache: dict[str, PredictionHuntMarketSummary] = {}
 
 
 def initialize_runtime() -> None:
@@ -67,13 +71,13 @@ def get_market_detail(market_id: str) -> MarketDetail | None:
     return next((market for market in markets if market.id == market_id), None)
 
 
-def list_market_events(market_id: str) -> list[MarketEvent]:
+def list_market_events(market_id: str, raw_market: PredictionHuntMarketSummary | None = None) -> list[MarketEvent]:
     market = get_market_detail(market_id)
     if market is None:
         return []
 
     try:
-        raw_market = _find_prediction_hunt_market(market_id)
+        raw_market = _find_prediction_hunt_market(market_id, raw_market)
         if raw_market is None:
             LOGGER.warning("prediction_hunt_event_skip market_id=%s reason=market_not_in_core_set", market_id)
             return []
@@ -116,6 +120,12 @@ def _load_prediction_hunt_markets() -> list[MarketDetail] | None:
         LOGGER.warning("prediction_hunt_market_load_failed detail=%s", exc.detail)
         return None
 
+    # Populate cache with raw markets
+    global _raw_markets_cache
+    _raw_markets_cache.clear()
+    for raw_market in response.markets:
+        _raw_markets_cache[raw_market.marketId] = raw_market
+
     mapped: list[MarketDetail] = []
     for raw_market in response.markets:
         try:
@@ -130,12 +140,13 @@ def _load_prediction_hunt_markets() -> list[MarketDetail] | None:
     return mapped
 
 
-def _find_prediction_hunt_market(market_id: str) -> PredictionHuntMarketSummary | None:
-    try:
-        response = get_prediction_hunt_markets(limit=CORE_MARKETS_LIMIT, status="active")
-    except (PredictionHuntNotConfiguredError, PredictionHuntUpstreamError):
-        return None
-    return next((market for market in response.markets if market.marketId == market_id), None)
+def _find_prediction_hunt_market(market_id: str, raw_market: PredictionHuntMarketSummary | None = None) -> PredictionHuntMarketSummary | None:
+    # If raw_market is provided, return it directly
+    if raw_market is not None:
+        return raw_market
+
+    # Otherwise, check the cache
+    return _raw_markets_cache.get(market_id)
 
 
 def _load_prediction_hunt_events_for_market(
