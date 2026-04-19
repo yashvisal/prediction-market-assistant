@@ -453,6 +453,8 @@ def _to_market_summary(raw: dict[str, Any]) -> PredictionHuntMarketSummary:
         title=str(raw.get("title") or "Untitled market"),
         category=raw.get("category"),
         status=str(raw.get("status") or "unknown"),
+        createdAt=raw.get("created_at") or raw.get("createdAt"),
+        creationDate=raw.get("creation_date") or raw.get("creationDate"),
         expirationDate=raw.get("expiration_date"),
         sourceUrl=raw.get("source_url"),
         price=PredictionHuntPriceSnapshot(

@@ -41,6 +41,7 @@ def test_prediction_hunt_market_history_and_matching_parsing():
             "title": "Will Bitcoin hit $100k this year?",
             "category": "economics",
             "status": "active",
+            "created_at": "2026-01-10T08:45:00Z",
             "expiration_date": "2026-12-31T23:59:59Z",
             "source_url": "https://example.com/market",
             "price": {
@@ -93,6 +94,7 @@ def test_prediction_hunt_market_history_and_matching_parsing():
     )
 
     assert market.marketId == "poly-btc-100k"
+    assert market.createdAt == "2026-01-10T08:45:00Z"
     assert market.price.lastPrice == 0.48
     assert candle.close == 0.48
     assert candle.dollarVolume == 864.0

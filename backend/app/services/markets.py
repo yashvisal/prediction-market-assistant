@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from contextvars import ContextVar
 from datetime import UTC, datetime
 
 from app.data.mock_markets import get_market as get_mock_market
@@ -35,8 +36,11 @@ DASHBOARD_EVENT_MARKET_LIMIT = 6
 DEFAULT_TIMESTAMP = "1970-01-01T00:00:00Z"
 MIN_EVENT_MOVEMENT = 0.01
 
-# Per-request cache for raw market data
-_raw_markets_cache: dict[str, PredictionHuntMarketSummary] = {}
+# Request-local raw market cache used to avoid repeated /markets lookups.
+_raw_markets_cache: ContextVar[dict[str, PredictionHuntMarketSummary] | None] = ContextVar(
+    "prediction_hunt_raw_markets_cache",
+    default=None,
+)
 
 
 def initialize_runtime() -> None:
@@ -76,15 +80,7 @@ def list_market_events(
 ) -> list[MarketEvent]:
     """Resolve events for a market. Pass ``market`` / ``raw_market`` when already loaded to avoid duplicate fetches."""
     if market is not None and raw_market is not None:
-        try:
-            return _load_prediction_hunt_events_for_market(market=market, raw_market=raw_market)
-        except (PredictionHuntNotConfiguredError, PredictionHuntUpstreamError) as exc:
-            LOGGER.warning(
-                "prediction_hunt_core_event_fallback market_id=%s reason=%s",
-                market_id,
-                str(exc),
-            )
-            return get_mock_market_events(market_id) if get_mock_market(market_id) else []
+        return _safe_load_prediction_hunt_events(market=market, raw_market=raw_market, market_id=market_id)
 
     ph_list = _load_prediction_hunt_markets()
     if ph_list is None:
@@ -97,29 +93,13 @@ def list_market_events(
         return []
 
     if raw_market is not None:
-        try:
-            return _load_prediction_hunt_events_for_market(market=detail, raw_market=raw_market)
-        except (PredictionHuntNotConfiguredError, PredictionHuntUpstreamError) as exc:
-            LOGGER.warning(
-                "prediction_hunt_core_event_fallback market_id=%s reason=%s",
-                market_id,
-                str(exc),
-            )
-            return get_mock_market_events(market_id) if get_mock_market(market_id) else []
+        return _safe_load_prediction_hunt_events(market=detail, raw_market=raw_market, market_id=market_id)
 
-    try:
-        resolved_raw = _find_prediction_hunt_market(market_id)
-        if resolved_raw is None:
-            LOGGER.warning("prediction_hunt_event_skip market_id=%s reason=market_not_in_core_set", market_id)
-            return []
-        return _load_prediction_hunt_events_for_market(market=detail, raw_market=resolved_raw)
-    except (PredictionHuntNotConfiguredError, PredictionHuntUpstreamError) as exc:
-        LOGGER.warning(
-            "prediction_hunt_core_event_fallback market_id=%s reason=%s",
-            market_id,
-            str(exc),
-        )
-        return get_mock_market_events(market_id) if get_mock_market(market_id) else []
+    resolved_raw = _find_prediction_hunt_market(market_id)
+    if resolved_raw is None:
+        LOGGER.warning("prediction_hunt_event_skip market_id=%s reason=market_not_in_core_set", market_id)
+        return []
+    return _safe_load_prediction_hunt_events(market=detail, raw_market=resolved_raw, market_id=market_id)
 
 
 def get_dashboard_snapshot() -> DashboardSnapshotResponse:
@@ -159,24 +139,23 @@ def _fetch_prediction_hunt_markets_bundle() -> (
     tuple[list[MarketDetail], dict[str, PredictionHuntMarketSummary]] | None
 ):
     """Single upstream /markets fetch producing mapped details plus raw rows keyed by market id."""
+    raw_by_id: dict[str, PredictionHuntMarketSummary] = {}
+    _raw_markets_cache.set(raw_by_id)
     try:
         response = get_prediction_hunt_markets(limit=CORE_MARKETS_LIMIT, status="active")
     except PredictionHuntNotConfiguredError:
         clear_prediction_hunt_http_cache()
-        _raw_markets_cache.clear()
+        _raw_markets_cache.set({})
         return None
     except PredictionHuntUpstreamError as exc:
         LOGGER.warning("prediction_hunt_market_load_failed detail=%s", exc.detail)
         clear_prediction_hunt_http_cache()
-        _raw_markets_cache.clear()
+        _raw_markets_cache.set({})
         return None
 
-    raw_by_id: dict[str, PredictionHuntMarketSummary] = {}
-    _raw_markets_cache.clear()
     mapped: list[MarketDetail] = []
     for raw_market in response.markets:
         raw_by_id[raw_market.marketId] = raw_market
-        _raw_markets_cache[raw_market.marketId] = raw_market
         try:
             mapped.append(_map_prediction_hunt_market(raw_market))
         except Exception:
@@ -200,7 +179,27 @@ def _find_prediction_hunt_market(market_id: str, raw_market: PredictionHuntMarke
         return raw_market
 
     # Otherwise, check the cache
-    return _raw_markets_cache.get(market_id)
+    cached_raw_markets = _raw_markets_cache.get()
+    if cached_raw_markets is None:
+        return None
+    return cached_raw_markets.get(market_id)
+
+
+def _safe_load_prediction_hunt_events(
+    *,
+    market: MarketDetail,
+    raw_market: PredictionHuntMarketSummary,
+    market_id: str,
+) -> list[MarketEvent]:
+    try:
+        return _load_prediction_hunt_events_for_market(market=market, raw_market=raw_market)
+    except (PredictionHuntNotConfiguredError, PredictionHuntUpstreamError) as exc:
+        LOGGER.warning(
+            "prediction_hunt_core_event_fallback market_id=%s reason=%s",
+            market_id,
+            str(exc),
+        )
+        return get_mock_market_events(market_id) if get_mock_market(market_id) else []
 
 
 def _load_prediction_hunt_events_for_market(
@@ -217,10 +216,22 @@ def _load_prediction_hunt_events_for_market(
     return [event] if event else []
 
 
+def _market_created_at(raw_market: PredictionHuntMarketSummary) -> str:
+    if raw_market.createdAt:
+        return raw_market.createdAt
+    if raw_market.creationDate:
+        return raw_market.creationDate
+
+    # Prediction Hunt does not always expose a creation timestamp. When it is
+    # missing, emit the current UTC time instead of incorrectly reusing expiry.
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
 def _map_prediction_hunt_market(raw_market: PredictionHuntMarketSummary) -> MarketDetail:
     current_probability = _current_probability(raw_market)
     previous_close = _previous_close(raw_market, current_probability)
     category = _map_category(raw_market.category, raw_market.title)
+    created_at = _market_created_at(raw_market)
     closes_at = raw_market.expirationDate or DEFAULT_TIMESTAMP
     status = _map_status(raw_market.status)
     description_bits = [
@@ -241,8 +252,8 @@ def _map_prediction_hunt_market(raw_market: PredictionHuntMarketSummary) -> Mark
         currentProbability=current_probability,
         previousClose=previous_close,
         volume=(raw_market.price.volume or 0),
-        liquidity=int(round(raw_market.price.liquidity or 0)),
-        createdAt=closes_at,
+        liquidity=round(raw_market.price.liquidity or 0),
+        createdAt=created_at,
         closesAt=closes_at,
         resolvedAt=closes_at if status == MarketStatus.RESOLVED else None,
         resolution=None,
