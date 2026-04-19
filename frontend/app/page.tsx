@@ -50,7 +50,7 @@ export default function LandingPage() {
       {/* ───── Strip ───── */}
       <section className="border-y bg-muted/30 py-5">
         <div className="mx-auto grid max-w-4xl grid-cols-1 items-center gap-y-2 px-6 text-center text-[11px] uppercase tracking-widest text-muted-foreground/50 sm:grid-cols-3 sm:gap-x-6 sm:gap-y-0">
-          <span className="justify-self-center">Kalshi integration</span>
+          <span className="justify-self-center">Prediction Hunt first-pass</span>
           <span className="justify-self-center">Real-time signals</span>
           <span className="justify-self-center">Evidence-first research</span>
         </div>

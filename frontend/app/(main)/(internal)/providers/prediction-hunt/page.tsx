@@ -385,20 +385,24 @@ function MatchingPanel({ snapshot }: { snapshot: PredictionHuntDeskSnapshotRespo
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        {matching.events.map((event, index) => (
-          <div key={`${event.title}-${index}`} className="rounded-xl border border-border/60 bg-background/60 px-4 py-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <p className="font-medium text-foreground">{event.title}</p>
-              {event.eventType ? <Badge variant="outline">{event.eventType}</Badge> : null}
-              {event.confidence ? <Badge variant="outline">{event.confidence}</Badge> : null}
-              {event.eventDate ? <Badge variant="outline">{event.eventDate}</Badge> : null}
-            </div>
-            <div className="mt-3 space-y-2">
-              {event.groups.map((group, groupIndex) => (
-                <div key={`${group.title}-${groupIndex}`} className="rounded-lg border border-border/50 px-3 py-3">
+        {matching.events.map((event, index) => {
+          const groups = Array.isArray(event.groups) ? event.groups : []
+          return (
+            <div
+              key={`e-${index}-${event.title}`}
+              className="flex flex-col gap-3 rounded-xl border border-border/60 bg-background/60 px-4 py-3"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="font-medium text-foreground">{event.title}</p>
+                {event.eventType ? <Badge variant="outline">{event.eventType}</Badge> : null}
+                {event.confidence ? <Badge variant="outline">{event.confidence}</Badge> : null}
+                {event.eventDate ? <Badge variant="outline">{event.eventDate}</Badge> : null}
+              </div>
+              {groups.map((group, groupIndex) => (
+                <div key={`g-${index}-${groupIndex}-${group.title}`} className="rounded-lg border border-border/50 px-3 py-3">
                   <p className="text-sm font-medium text-foreground">{group.title}</p>
                   <div className="mt-2 flex flex-wrap gap-2">
-                    {group.markets.map((market) => (
+                    {(group.markets ?? []).map((market) => (
                       <a
                         key={`${group.title}-${market.source}-${market.id}`}
                         href={market.sourceUrl ?? "#"}
@@ -414,8 +418,8 @@ function MatchingPanel({ snapshot }: { snapshot: PredictionHuntDeskSnapshotRespo
                 </div>
               ))}
             </div>
-          </div>
-        ))}
+          )
+        })}
       </CardContent>
     </Card>
   )
