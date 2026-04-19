@@ -9,7 +9,12 @@ from app.models.market import (
     MovementDirection,
 )
 from app.models.prediction_hunt import PredictionHuntCandle, PredictionHuntMarketSummary, PredictionHuntPriceSnapshot
-from app.services.markets import _build_recent_move_event, _map_prediction_hunt_market
+from app.services.markets import (
+    _build_recent_move_event,
+    _candle_probability,
+    _current_probability,
+    _map_prediction_hunt_market,
+)
 
 
 def _raw_market() -> PredictionHuntMarketSummary:
@@ -36,6 +41,28 @@ def _raw_market() -> PredictionHuntMarketSummary:
 
 def _market_detail() -> MarketDetail:
     return _map_prediction_hunt_market(_raw_market())
+
+
+def test_zero_probability_values_are_not_treated_as_missing():
+    raw = PredictionHuntMarketSummary(
+        id=1,
+        marketId="zero-prob",
+        platform="polymarket",
+        title="Zero case",
+        status="active",
+        expirationDate="2026-09-18T00:00:00Z",
+        price=PredictionHuntPriceSnapshot(
+            lastPrice=0.0,
+            yesBid=0.0,
+            yesAsk=0.0,
+            volume=0,
+            liquidity=0.0,
+        ),
+    )
+    assert _current_probability(raw) == 0.0
+    assert _candle_probability(
+        PredictionHuntCandle(timestamp="2026-01-01T00:00:00Z", close=0.0, mid=None)
+    ) == 0.0
 
 
 def test_prediction_hunt_market_maps_into_core_contract():

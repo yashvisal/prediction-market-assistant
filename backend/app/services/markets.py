@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from functools import lru_cache
 
 from app.data.mock_markets import get_market as get_mock_market
 from app.data.mock_markets import get_market_events as get_mock_market_events
@@ -24,6 +23,7 @@ from app.models.prediction_hunt import PredictionHuntCandle, PredictionHuntMarke
 from app.services.prediction_hunt import (
     PredictionHuntNotConfiguredError,
     PredictionHuntUpstreamError,
+    clear_prediction_hunt_http_cache,
     get_prediction_hunt_markets,
     get_prediction_hunt_price_history,
 )
@@ -71,17 +71,48 @@ def get_market_detail(market_id: str) -> MarketDetail | None:
     return next((market for market in markets if market.id == market_id), None)
 
 
-def list_market_events(market_id: str, raw_market: PredictionHuntMarketSummary | None = None) -> list[MarketEvent]:
-    market = get_market_detail(market_id)
-    if market is None:
+def list_market_events(
+    market_id: str, *, market: MarketDetail | None = None, raw_market: PredictionHuntMarketSummary | None = None
+) -> list[MarketEvent]:
+    """Resolve events for a market. Pass ``market`` / ``raw_market`` when already loaded to avoid duplicate fetches."""
+    if market is not None and raw_market is not None:
+        try:
+            return _load_prediction_hunt_events_for_market(market=market, raw_market=raw_market)
+        except (PredictionHuntNotConfiguredError, PredictionHuntUpstreamError) as exc:
+            LOGGER.warning(
+                "prediction_hunt_core_event_fallback market_id=%s reason=%s",
+                market_id,
+                str(exc),
+            )
+            return get_mock_market_events(market_id) if get_mock_market(market_id) else []
+
+    ph_list = _load_prediction_hunt_markets()
+    if ph_list is None:
+        if get_mock_market(market_id):
+            return get_mock_market_events(market_id)
         return []
 
+    detail = market if market is not None else next((m for m in ph_list if m.id == market_id), None)
+    if detail is None:
+        return []
+
+    if raw_market is not None:
+        try:
+            return _load_prediction_hunt_events_for_market(market=detail, raw_market=raw_market)
+        except (PredictionHuntNotConfiguredError, PredictionHuntUpstreamError) as exc:
+            LOGGER.warning(
+                "prediction_hunt_core_event_fallback market_id=%s reason=%s",
+                market_id,
+                str(exc),
+            )
+            return get_mock_market_events(market_id) if get_mock_market(market_id) else []
+
     try:
-        raw_market = _find_prediction_hunt_market(market_id, raw_market)
-        if raw_market is None:
+        resolved_raw = _find_prediction_hunt_market(market_id)
+        if resolved_raw is None:
             LOGGER.warning("prediction_hunt_event_skip market_id=%s reason=market_not_in_core_set", market_id)
             return []
-        return _load_prediction_hunt_events_for_market(market=market, raw_market=raw_market)
+        return _load_prediction_hunt_events_for_market(market=detail, raw_market=resolved_raw)
     except (PredictionHuntNotConfiguredError, PredictionHuntUpstreamError) as exc:
         LOGGER.warning(
             "prediction_hunt_core_event_fallback market_id=%s reason=%s",
@@ -92,12 +123,25 @@ def list_market_events(market_id: str, raw_market: PredictionHuntMarketSummary |
 
 
 def get_dashboard_snapshot() -> DashboardSnapshotResponse:
-    markets = list_market_summaries(status=MarketStatus.OPEN)
+    bundle = _fetch_prediction_hunt_markets_bundle()
+    if bundle is None:
+        LOGGER.warning(
+            "prediction_hunt_core_fallback target=dashboard status=%s category=%s",
+            MarketStatus.OPEN.value,
+            "all",
+        )
+        markets = list_mock_markets(status=MarketStatus.OPEN)
+        raw_by_id: dict[str, PredictionHuntMarketSummary] = {}
+    else:
+        detail_list, raw_by_id = bundle
+        markets = [m for m in detail_list if m.status == MarketStatus.OPEN]
+
     active_markets = markets[:DASHBOARD_MARKET_LIMIT]
 
     top_events: list[MarketEventFeedItem] = []
     for market in active_markets[:DASHBOARD_EVENT_MARKET_LIMIT]:
-        for event in list_market_events(market.id):
+        raw = raw_by_id.get(market.id)
+        for event in list_market_events(market.id, market=market, raw_market=raw):
             top_events.append(
                 MarketEventFeedItem(
                     **event.model_dump(),
@@ -111,23 +155,28 @@ def get_dashboard_snapshot() -> DashboardSnapshotResponse:
     return DashboardSnapshotResponse(activeMarkets=active_markets, topEvents=top_events[:4])
 
 
-def _load_prediction_hunt_markets() -> list[MarketDetail] | None:
+def _fetch_prediction_hunt_markets_bundle() -> (
+    tuple[list[MarketDetail], dict[str, PredictionHuntMarketSummary]] | None
+):
+    """Single upstream /markets fetch producing mapped details plus raw rows keyed by market id."""
     try:
         response = get_prediction_hunt_markets(limit=CORE_MARKETS_LIMIT, status="active")
     except PredictionHuntNotConfiguredError:
+        clear_prediction_hunt_http_cache()
+        _raw_markets_cache.clear()
         return None
     except PredictionHuntUpstreamError as exc:
         LOGGER.warning("prediction_hunt_market_load_failed detail=%s", exc.detail)
+        clear_prediction_hunt_http_cache()
+        _raw_markets_cache.clear()
         return None
 
-    # Populate cache with raw markets
-    global _raw_markets_cache
+    raw_by_id: dict[str, PredictionHuntMarketSummary] = {}
     _raw_markets_cache.clear()
-    for raw_market in response.markets:
-        _raw_markets_cache[raw_market.marketId] = raw_market
-
     mapped: list[MarketDetail] = []
     for raw_market in response.markets:
+        raw_by_id[raw_market.marketId] = raw_market
+        _raw_markets_cache[raw_market.marketId] = raw_market
         try:
             mapped.append(_map_prediction_hunt_market(raw_market))
         except Exception:
@@ -137,7 +186,12 @@ def _load_prediction_hunt_markets() -> list[MarketDetail] | None:
                 raw_market.platform,
             )
     LOGGER.info("prediction_hunt_market_load_success count=%s", len(mapped))
-    return mapped
+    return mapped, raw_by_id
+
+
+def _load_prediction_hunt_markets() -> list[MarketDetail] | None:
+    bundle = _fetch_prediction_hunt_markets_bundle()
+    return None if bundle is None else bundle[0]
 
 
 def _find_prediction_hunt_market(market_id: str, raw_market: PredictionHuntMarketSummary | None = None) -> PredictionHuntMarketSummary | None:
@@ -186,7 +240,7 @@ def _map_prediction_hunt_market(raw_market: PredictionHuntMarketSummary) -> Mark
         category=category,
         currentProbability=current_probability,
         previousClose=previous_close,
-        volume=int(raw_market.price.volume or 0),
+        volume=(raw_market.price.volume or 0),
         liquidity=int(round(raw_market.price.liquidity or 0)),
         createdAt=closes_at,
         closesAt=closes_at,
@@ -299,28 +353,35 @@ def _map_category(raw_category: str | None, title: str) -> MarketCategory:
     return MarketCategory.FINANCE
 
 
+def _first_float_or(*values: float | None) -> float | None:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
 def _current_probability(raw_market: PredictionHuntMarketSummary) -> float:
-    return _clamp_probability(
-        raw_market.price.lastPrice
-        or raw_market.price.yesBid
-        or raw_market.price.yesAsk
-        or _midpoint(raw_market.price.yesBid, raw_market.price.yesAsk)
-        or 0.0
+    candidate = _first_float_or(
+        raw_market.price.lastPrice,
+        raw_market.price.yesBid,
+        raw_market.price.yesAsk,
+        _midpoint(raw_market.price.yesBid, raw_market.price.yesAsk),
     )
+    return _clamp_probability(candidate if candidate is not None else 0.0)
 
 
 def _previous_close(raw_market: PredictionHuntMarketSummary, current_probability: float) -> float:
-    candidate = (
-        _midpoint(raw_market.price.yesBid, raw_market.price.yesAsk)
-        or raw_market.price.yesBid
-        or raw_market.price.yesAsk
-        or current_probability
+    candidate = _first_float_or(
+        _midpoint(raw_market.price.yesBid, raw_market.price.yesAsk),
+        raw_market.price.yesBid,
+        raw_market.price.yesAsk,
+        current_probability,
     )
-    return _clamp_probability(candidate)
+    return _clamp_probability(candidate if candidate is not None else 0.0)
 
 
 def _candle_probability(candle: PredictionHuntCandle) -> float | None:
-    candidate = candle.close or candle.mid or _midpoint(candle.yesBid, candle.yesAsk)
+    candidate = _first_float_or(candle.close, candle.mid, _midpoint(candle.yesBid, candle.yesAsk))
     return _clamp_probability(candidate) if candidate is not None else None
 
 

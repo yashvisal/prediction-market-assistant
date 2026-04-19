@@ -56,6 +56,11 @@ class _ApiResult:
 
 _CACHE: dict[str, tuple[float, _ApiResult]] = {}
 _THROTTLE_LOCK = threading.Lock()
+
+
+def clear_prediction_hunt_http_cache() -> None:
+    """Drop cached HTTP responses (e.g. after a failed /markets load that should retry fresh)."""
+    _CACHE.clear()
 _NEXT_REQUEST_AT = 0.0
 LOGGER = logging.getLogger(__name__)
 
