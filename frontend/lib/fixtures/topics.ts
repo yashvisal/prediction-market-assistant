@@ -19,6 +19,7 @@ interface TopicSeed {
 }
 
 let cachedTopics: TopicState[] | undefined
+const phraseRegexCache = new Map<string, RegExp>()
 
 const topicSeeds: TopicSeed[] = [
   {
@@ -87,8 +88,20 @@ function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
 
+function getPhraseRegex(phrase: string): RegExp {
+  const normalizedPhrase = escapeRegex(phrase.toLowerCase())
+  const cached = phraseRegexCache.get(normalizedPhrase)
+  if (cached) {
+    return cached
+  }
+
+  const compiled = new RegExp(`\\b${normalizedPhrase}\\b`, "i")
+  phraseRegexCache.set(normalizedPhrase, compiled)
+  return compiled
+}
+
 function matchesPhrase(text: string, phrase: string): boolean {
-  return new RegExp(`\\b${escapeRegex(phrase.toLowerCase())}\\b`, "i").test(text)
+  return getPhraseRegex(phrase).test(text)
 }
 
 function searchableText(market: MarketDetail, events: MarketEvent[]): string {
@@ -328,5 +341,5 @@ export function getTopics(): TopicSummary[] {
 
 export function getTopicById(topicId: string): TopicDetail | undefined {
   const topic = getCachedTopics().find((entry) => entry.id === topicId)
-  return topic ? { ...topic } : undefined
+  return topic ? structuredClone(topic) : undefined
 }
