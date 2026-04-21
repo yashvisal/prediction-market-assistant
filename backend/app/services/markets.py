@@ -31,6 +31,7 @@ DASHBOARD_MARKET_LIMIT = 12
 DASHBOARD_EVENT_MARKET_LIMIT = 6
 DEFAULT_TIMESTAMP = "1970-01-01T00:00:00Z"
 MIN_EVENT_MOVEMENT = 0.01
+MARKET_CREATION_UNKNOWN = DEFAULT_TIMESTAMP
 
 # Request-local raw market cache used to avoid repeated /markets lookups.
 _raw_markets_cache: ContextVar[dict[str, PredictionHuntMarketSummary] | None] = ContextVar(
@@ -245,9 +246,9 @@ def _market_created_at(raw_market: PredictionHuntMarketSummary) -> str:
     if raw_market.creationDate:
         return raw_market.creationDate
 
-    # Prediction Hunt does not always expose a creation timestamp. When it is
-    # missing, emit the current UTC time instead of incorrectly reusing expiry.
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    # Prediction Hunt does not always expose a creation timestamp. Keep the
+    # fallback stable so unchanged markets do not look newly created.
+    return MARKET_CREATION_UNKNOWN
 
 
 def _map_prediction_hunt_market(raw_market: PredictionHuntMarketSummary) -> MarketDetail:
