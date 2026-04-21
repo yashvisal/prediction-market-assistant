@@ -446,6 +446,13 @@ def _to_event_summary(raw: dict[str, Any]) -> PredictionHuntEventSummary:
 
 def _to_market_summary(raw: dict[str, Any]) -> PredictionHuntMarketSummary:
     price = raw.get("price") or {}
+    created_at = (
+        raw.get("created_at")
+        or raw.get("createdAt")
+        or raw.get("creation_date")
+        or raw.get("creationDate")
+    )
+    creation_date = raw.get("creation_date") or raw.get("creationDate") or created_at
     return PredictionHuntMarketSummary(
         id=int(raw.get("id") or 0),
         marketId=str(raw.get("market_id") or ""),
@@ -453,8 +460,8 @@ def _to_market_summary(raw: dict[str, Any]) -> PredictionHuntMarketSummary:
         title=str(raw.get("title") or "Untitled market"),
         category=raw.get("category"),
         status=str(raw.get("status") or "unknown"),
-        createdAt=raw.get("created_at") or raw.get("createdAt"),
-        creationDate=raw.get("creation_date") or raw.get("creationDate"),
+        createdAt=created_at,
+        creationDate=creation_date,
         expirationDate=raw.get("expiration_date"),
         sourceUrl=raw.get("source_url"),
         price=PredictionHuntPriceSnapshot(
