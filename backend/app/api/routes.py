@@ -20,6 +20,7 @@ from app.models.market import (
     MarketsResponse,
     MarketStatus,
 )
+from app.models.topic import TopicDetail, TopicsResponse
 from app.services.prediction_hunt import (
     PredictionHuntNotConfiguredError,
     PredictionHuntUpstreamError,
@@ -37,6 +38,7 @@ from app.services.markets import (
     list_market_events,
     list_market_summaries,
 )
+from app.services.topics import get_topic_detail, list_topics
 
 router = APIRouter(prefix="/api")
 LOGGER = logging.getLogger(__name__)
@@ -56,7 +58,7 @@ def health_check() -> HealthResponse:
 
 @router.get("/dashboard", response_model=DashboardSnapshotResponse)
 def dashboard_snapshot() -> DashboardSnapshotResponse:
-    LOGGER.info("core_dashboard_requested")
+    LOGGER.info("legacy_dashboard_requested")
     return get_dashboard_snapshot()
 
 
@@ -66,7 +68,7 @@ def markets_index(
     category: MarketCategory | None = Query(default=None),
 ) -> MarketsResponse:
     LOGGER.info(
-        "core_markets_requested status=%s category=%s",
+        "legacy_markets_requested status=%s category=%s",
         _enum_log_value(status),
         _enum_log_value(category),
     )
@@ -77,7 +79,7 @@ def markets_index(
 
 @router.get("/markets/{market_id}", response_model=MarketDetail)
 def market_detail(market_id: str) -> MarketDetail:
-    LOGGER.info("core_market_detail_requested market_id=%s", market_id)
+    LOGGER.info("legacy_market_detail_requested market_id=%s", market_id)
     market = get_market_detail(market_id)
 
     if market is None:
@@ -88,13 +90,30 @@ def market_detail(market_id: str) -> MarketDetail:
 
 @router.get("/markets/{market_id}/events", response_model=MarketEventsResponse)
 def market_events(market_id: str) -> MarketEventsResponse:
-    LOGGER.info("core_market_events_requested market_id=%s", market_id)
+    LOGGER.info("legacy_market_events_requested market_id=%s", market_id)
     market = get_market_detail(market_id)
 
     if market is None:
         raise HTTPException(status_code=404, detail="Market not found.")
 
     return MarketEventsResponse(items=list_market_events(market_id))
+
+
+@router.get("/topics", response_model=TopicsResponse)
+def topics_index() -> TopicsResponse:
+    LOGGER.info("core_topics_requested")
+    return TopicsResponse(items=list_topics())
+
+
+@router.get("/topics/{topic_id}", response_model=TopicDetail)
+def topic_detail(topic_id: str) -> TopicDetail:
+    LOGGER.info("core_topic_detail_requested topic_id=%s", topic_id)
+    topic = get_topic_detail(topic_id)
+
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Topic not found.")
+
+    return topic
 
 
 @router.get("/internal/providers/prediction-hunt/status", response_model=PredictionHuntStatusResponse)

@@ -7,18 +7,14 @@ from datetime import UTC, datetime
 from app.data.mock_markets import get_market as get_mock_market
 from app.data.mock_markets import get_market_events as get_mock_market_events
 from app.data.mock_markets import list_markets as list_mock_markets
+from app.models.intelligence import Entity, EntityType, MovementDirection, Signal, SignalSourceType
 from app.models.market import (
     DashboardSnapshotResponse,
-    Entity,
-    EntityType,
     MarketCategory,
     MarketDetail,
     MarketEvent,
     MarketEventFeedItem,
     MarketStatus,
-    MovementDirection,
-    Signal,
-    SignalSourceType,
 )
 from app.models.prediction_hunt import PredictionHuntCandle, PredictionHuntMarketSummary
 from app.services.prediction_hunt import (
@@ -133,6 +129,33 @@ def get_dashboard_snapshot() -> DashboardSnapshotResponse:
 
     top_events.sort(key=lambda item: abs(item.movementPercent), reverse=True)
     return DashboardSnapshotResponse(activeMarkets=active_markets, topEvents=top_events[:4])
+
+
+def list_market_activity(
+    *, status: MarketStatus | None = None, category: MarketCategory | None = None
+) -> list[tuple[MarketDetail, list[MarketEvent]]]:
+    bundle = _fetch_prediction_hunt_markets_bundle()
+    if bundle is None:
+        markets = list_mock_markets(status=status, category=category)
+        return [(market, get_mock_market_events(market.id)) for market in markets]
+
+    detail_list, raw_by_id = bundle
+    activity: list[tuple[MarketDetail, list[MarketEvent]]] = []
+    for market in detail_list:
+        if status is not None and market.status != status:
+            continue
+        if category is not None and market.category != category:
+            continue
+
+        raw_market = raw_by_id.get(market.id)
+        events = (
+            list_market_events(market.id, market=market, raw_market=raw_market)
+            if raw_market is not None
+            else []
+        )
+        activity.append((market, events))
+
+    return activity
 
 
 def _fetch_prediction_hunt_markets_bundle() -> (

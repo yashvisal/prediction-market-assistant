@@ -20,9 +20,9 @@ const fontMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: "Prediction Market Assistant",
+  title: "World Signal Feed",
   description:
-    "A research workstation for understanding what drives prediction market movements.",
+    "A topic-centric intelligence product that turns fragmented prediction market signals into clear views of what is changing.",
 }
 
 export default function RootLayout({

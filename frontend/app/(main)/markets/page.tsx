@@ -1,3 +1,4 @@
+import { LegacySurfaceNotice } from "@/components/legacy/legacy-surface-notice"
 import { MarketsPageView } from "@/components/markets/markets-page-view"
 import { listMarkets } from "@/lib/repositories/markets"
 import {
@@ -27,5 +28,13 @@ export default async function MarketsPage({ searchParams }: Props) {
     : undefined
   const markets = await listMarkets(statusFilter, categoryFilter)
 
-  return <MarketsPageView markets={markets} />
+  return (
+    <div className="space-y-6">
+      <LegacySurfaceNotice
+        title="This market gallery is now a legacy compatibility surface."
+        description="Use the topic feed for the forward-looking experience. These market pages remain temporarily while topic routes fully replace their role."
+      />
+      <MarketsPageView markets={markets} />
+    </div>
+  )
 }

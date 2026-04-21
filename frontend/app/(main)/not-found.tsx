@@ -10,22 +10,22 @@ export default function AppNotFound() {
         Not Found
       </p>
       <h1 className="mt-3 text-balance text-2xl font-semibold tracking-tight">
-        That workspace could not be found.
+        That topic view could not be found.
       </h1>
       <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-        The market may have been removed, or the URL may be incorrect. Go back to the
-        markets gallery and open another workspace.
+        The topic may have been removed, or the URL may be incorrect. Go back to the feed
+        and open another topic.
       </p>
 
       <div className="mt-6 flex flex-wrap gap-3">
-        <Link href="/markets" className={buttonVariants()}>
-          Browse Markets
+        <Link href="/feed" className={buttonVariants()}>
+          Open Feed
         </Link>
         <Link
-          href="/dashboard"
+          href="/topics"
           className={cn(buttonVariants({ variant: "ghost" }), "text-muted-foreground")}
         >
-          Open Dashboard
+          View Topics
         </Link>
       </div>
     </div>

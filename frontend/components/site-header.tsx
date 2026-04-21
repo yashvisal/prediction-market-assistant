@@ -12,27 +12,18 @@ export function SiteHeader() {
           href="/"
           className="rounded-md text-sm font-semibold tracking-tight focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
         >
-          Prediction Market Assistant
+          World Signal Feed
         </Link>
         <div className="flex items-center gap-2">
           <nav aria-label="Primary" className="flex items-center gap-1">
             <Link
-              href="/dashboard"
+              href="/feed"
               className={cn(
                 buttonVariants({ variant: "ghost", size: "sm" }),
                 "text-muted-foreground"
               )}
             >
-              Dashboard
-            </Link>
-            <Link
-              href="/markets"
-              className={cn(
-                buttonVariants({ variant: "ghost", size: "sm" }),
-                "text-muted-foreground"
-              )}
-            >
-              Markets
+              Feed
             </Link>
           </nav>
           <ThemeToggle />
