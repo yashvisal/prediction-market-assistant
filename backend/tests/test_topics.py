@@ -229,3 +229,13 @@ def test_topic_detail_route_returns_topic_detail_shape(monkeypatch):
     assert payload["id"] == "fed-policy"
     assert payload["category"] == "finance"
     assert payload["strongestMovementDirection"] == "up"
+
+
+def test_topic_detail_route_returns_404_when_missing(monkeypatch):
+    monkeypatch.setattr("app.api.routes.get_topic_detail", lambda topic_id: None)
+
+    client = TestClient(app)
+    response = client.get("/api/topics/does-not-exist")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Topic not found."
