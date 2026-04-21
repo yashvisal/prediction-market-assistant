@@ -18,6 +18,8 @@ interface TopicSeed {
   entityNames: string[]
 }
 
+let cachedTopics: TopicState[] | undefined
+
 const topicSeeds: TopicSeed[] = [
   {
     id: "fed-policy",
@@ -299,8 +301,16 @@ function buildTopics(): TopicState[] {
   )
 }
 
+function getCachedTopics(): TopicState[] {
+  if (!cachedTopics) {
+    cachedTopics = buildTopics()
+  }
+
+  return cachedTopics
+}
+
 export function getTopics(): TopicSummary[] {
-  return buildTopics().map((topic) => ({
+  return getCachedTopics().map((topic) => ({
     id: topic.id,
     title: topic.title,
     description: topic.description,
@@ -317,6 +327,6 @@ export function getTopics(): TopicSummary[] {
 }
 
 export function getTopicById(topicId: string): TopicDetail | undefined {
-  const topic = buildTopics().find((entry) => entry.id === topicId)
+  const topic = getCachedTopics().find((entry) => entry.id === topicId)
   return topic ? { ...topic } : undefined
 }

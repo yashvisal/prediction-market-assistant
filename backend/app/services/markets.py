@@ -276,7 +276,7 @@ def _map_prediction_hunt_market(raw_market: PredictionHuntMarketSummary) -> Mark
         currentProbability=current_probability,
         previousClose=previous_close,
         volume=(raw_market.price.volume or 0),
-        liquidity=round(raw_market.price.liquidity or 0),
+        liquidity=int(round(raw_market.price.liquidity or 0)),
         createdAt=created_at,
         closesAt=closes_at,
         resolvedAt=closes_at if status == MarketStatus.RESOLVED else None,

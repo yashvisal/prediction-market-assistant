@@ -65,10 +65,7 @@ export function TopicDetailView({ topic }: { topic: TopicDetail }) {
                 <div className="flex items-center justify-between gap-3">
                   <span>Current movement</span>
                   <span className="font-semibold text-foreground">
-                    {formatMovement(
-                      Math.abs(market.currentMovementPercent),
-                      market.currentDirection
-                    )}
+                    {formatMovement(market.currentMovementPercent, market.currentDirection)}
                   </span>
                 </div>
                 <div className="flex items-center justify-between gap-3">
