@@ -34,7 +34,7 @@ export function FeedView({ topics }: FeedViewProps) {
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
           {topics.map((topic) => (
-            <Link key={topic.id} href={`/topics/${topic.id}`} className="block">
+            <Link key={topic.id} href={`/topics/${encodeURIComponent(topic.id)}`} className="block">
               <Card
                 className="h-full border border-border/60 transition-colors hover:border-border hover:bg-accent/20"
                 size="sm"

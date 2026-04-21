@@ -81,6 +81,14 @@ const topicSeeds: TopicSeed[] = [
   },
 ]
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+function matchesPhrase(text: string, phrase: string): boolean {
+  return new RegExp(`\\b${escapeRegex(phrase.toLowerCase())}\\b`, "i").test(text)
+}
+
 function searchableText(market: MarketDetail, events: MarketEvent[]): string {
   const bits = [market.title, market.description, market.category]
   for (const event of events) {
@@ -103,12 +111,12 @@ function matchSeed(market: MarketDetail, events: MarketEvent[]): TopicSeed | nul
   for (const seed of topicSeeds) {
     let score = market.category === seed.category ? 1 : 0
     for (const token of seed.tokens) {
-      if (text.includes(token)) {
+      if (matchesPhrase(text, token)) {
         score += 2
       }
     }
     for (const entityName of seed.entityNames) {
-      if (text.includes(entityName.toLowerCase())) {
+      if (matchesPhrase(text, entityName)) {
         score += 3
       }
     }
@@ -134,6 +142,18 @@ function latestEventAt(events: MarketEvent[]): string | undefined {
   }, undefined)
 }
 
+function latestTimestamp(timestamps: Array<string | null | undefined>): string | null {
+  return timestamps.reduce<string | null>((latest, timestamp) => {
+    if (!timestamp) {
+      return latest
+    }
+    if (!latest || new Date(timestamp).getTime() > new Date(latest).getTime()) {
+      return timestamp
+    }
+    return latest
+  }, null)
+}
+
 function toTopicMarket(market: MarketDetail, events: MarketEvent[]): TopicMarket {
   const movement = Number((market.currentProbability - market.previousClose).toFixed(4))
   return {
@@ -146,7 +166,7 @@ function toTopicMarket(market: MarketDetail, events: MarketEvent[]): TopicMarket
     currentMovementPercent: movement,
     currentDirection: toDirection(movement),
     eventCount: events.length,
-    lastEventAt: latestEventAt(events) ?? market.lastEventAt,
+    lastEventAt: latestEventAt(events) ?? market.lastEventAt ?? null,
   }
 }
 
@@ -162,7 +182,7 @@ function toTopicUpdate(market: MarketDetail, event: MarketEvent): TopicUpdate {
     endTime: event.endTime,
     movementPercent: event.movementPercent,
     direction: event.direction,
-    summary: event.summary,
+    summary: event.summary ?? null,
     signals: event.signals,
     entities: event.entities,
   }
@@ -214,8 +234,10 @@ function buildTopics(): TopicState[] {
       continue
     }
 
-    const markets = members
-      .map(({ market, events }) => toTopicMarket(market, events))
+    const topicMarkets = members.map(({ market, events }) => toTopicMarket(market, events))
+    const latestMarketActivityAt = latestTimestamp(topicMarkets.map((market) => market.lastEventAt))
+    const markets = topicMarkets
+      .slice()
       .sort(
         (left, right) =>
           Math.abs(right.currentMovementPercent) - Math.abs(left.currentMovementPercent)
@@ -264,7 +286,7 @@ function buildTopics(): TopicState[] {
       signalCount,
       strongestMovementPercent,
       strongestMovementDirection,
-      latestUpdateAt: updates[0]?.endTime ?? markets[0]?.lastEventAt,
+      latestUpdateAt: updates[0]?.endTime ?? latestMarketActivityAt,
       markets,
       updates,
     })

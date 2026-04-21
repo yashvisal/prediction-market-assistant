@@ -31,8 +31,7 @@ export function TopicDetailView({ topic }: { topic: TopicDetail }) {
           <span>{topic.updateCount} update{topic.updateCount !== 1 ? "s" : ""}</span>
           <span>{topic.signalCount} signal{topic.signalCount !== 1 ? "s" : ""}</span>
           <span>
-            Strongest move{" "}
-            {formatMovement(topic.strongestMovementPercent, topic.strongestMovementDirection ?? "up")}
+            Strongest move {formatMovement(topic.strongestMovementPercent, topic.strongestMovementDirection)}
           </span>
         </div>
       </section>

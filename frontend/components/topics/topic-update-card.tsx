@@ -20,12 +20,14 @@ const sourceTypeConfig: Record<string, { label: string; accent: string }> = {
 
 export function TopicUpdateCard({ update }: { update: TopicUpdate }) {
   const [expanded, setExpanded] = React.useState(false)
+  const panelId = React.useId()
 
   return (
     <div className="rounded-lg border border-border/60 bg-card">
       <button
         type="button"
         aria-expanded={expanded}
+        aria-controls={panelId}
         onClick={() => setExpanded(!expanded)}
         className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
       >
@@ -58,7 +60,7 @@ export function TopicUpdateCard({ update }: { update: TopicUpdate }) {
       </button>
 
       {expanded ? (
-        <div className="space-y-4 border-t px-4 pb-4 pt-3">
+        <div id={panelId} className="space-y-4 border-t px-4 pb-4 pt-3">
           {update.summary ? (
             <p className="text-sm leading-relaxed text-muted-foreground">{update.summary}</p>
           ) : null}
