@@ -7,6 +7,10 @@ import type { TopicDetail, TopicSummary, TopicsResponse } from "@/lib/topic-type
 
 const API_BASE_URL = process.env.PREDICTION_MARKET_API_BASE_URL?.replace(/\/$/, "")
 
+function logTopicFallback(context: string, error: unknown, details: Record<string, string> = {}) {
+  console.error(`[topicsRepository] ${context}`, { error, ...details })
+}
+
 async function fetchApi<T>(path: string): Promise<T> {
   if (!API_BASE_URL) {
     throw new Error("API base URL is not configured.")
@@ -36,7 +40,8 @@ export const listTopics = cache(async (): Promise<TopicSummary[]> => {
   try {
     const response = await fetchApi<TopicsResponse>("/api/topics")
     return response.items
-  } catch {
+  } catch (error) {
+    logTopicFallback("listTopics fallback", error, { endpoint: "/api/topics" })
     return getFixtureTopics()
   }
 })
@@ -47,7 +52,8 @@ export const getTopicDetail = cache(async (topicId: string): Promise<TopicDetail
   }
 
   try {
-    const response = await fetch(`${API_BASE_URL}/api/topics/${topicId}`, {
+    const encodedTopicId = encodeURIComponent(topicId)
+    const response = await fetch(`${API_BASE_URL}/api/topics/${encodedTopicId}`, {
       headers: {
         Accept: "application/json",
       },
@@ -65,7 +71,11 @@ export const getTopicDetail = cache(async (topicId: string): Promise<TopicDetail
     }
 
     return (await response.json()) as TopicDetail
-  } catch {
+  } catch (error) {
+    logTopicFallback("getTopicDetail fallback", error, {
+      endpoint: "/api/topics/[topicId]",
+      topicId,
+    })
     return getTopicById(topicId) ?? null
   }
 })

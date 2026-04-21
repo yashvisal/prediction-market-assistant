@@ -28,6 +28,10 @@ interface MarketFilters {
   category?: MarketCategory
 }
 
+function logRepositoryFallback(context: string, error: unknown, details: Record<string, string> = {}) {
+  console.error(`[marketsRepository] ${context}`, { error, ...details })
+}
+
 function buildQuery(filters: MarketFilters) {
   const params = new URLSearchParams()
 
@@ -71,7 +75,8 @@ export const checkApiHealth = cache(async (): Promise<HealthResponse | null> => 
 
   try {
     return await fetchApi<HealthResponse>("/api/health")
-  } catch {
+  } catch (error) {
+    logRepositoryFallback("checkApiHealth fallback", error, { endpoint: "/api/health" })
     return null
   }
 })
@@ -88,7 +93,12 @@ export const listMarkets = cache(
       )
 
       return response.items
-    } catch {
+    } catch (error) {
+      logRepositoryFallback("listMarkets fallback", error, {
+        endpoint: "/api/markets",
+        status: status ?? "all",
+        category: category ?? "all",
+      })
       return getMockMarkets({ status, category })
     }
   }
@@ -100,7 +110,8 @@ export const getMarketDetail = cache(async (marketId: string): Promise<MarketDet
   }
 
   try {
-    const response = await fetch(`${API_BASE_URL}/api/markets/${marketId}`, {
+    const encodedMarketId = encodeURIComponent(marketId)
+    const response = await fetch(`${API_BASE_URL}/api/markets/${encodedMarketId}`, {
       headers: {
         Accept: "application/json",
       },
@@ -120,7 +131,11 @@ export const getMarketDetail = cache(async (marketId: string): Promise<MarketDet
     }
 
     return (await response.json()) as MarketDetail
-  } catch {
+  } catch (error) {
+    logRepositoryFallback("getMarketDetail fallback", error, {
+      endpoint: "/api/markets/[marketId]",
+      marketId,
+    })
     return getFixtureMarketById(marketId) ?? null
   }
 })
@@ -131,7 +146,8 @@ export const listMarketEvents = cache(async (marketId: string): Promise<MarketEv
   }
 
   try {
-    const response = await fetch(`${API_BASE_URL}/api/markets/${marketId}/events`, {
+    const encodedMarketId = encodeURIComponent(marketId)
+    const response = await fetch(`${API_BASE_URL}/api/markets/${encodedMarketId}/events`, {
       headers: {
         Accept: "application/json",
       },
@@ -152,7 +168,11 @@ export const listMarketEvents = cache(async (marketId: string): Promise<MarketEv
 
     const payload = (await response.json()) as MarketEventsResponse
     return payload.items
-  } catch {
+  } catch (error) {
+    logRepositoryFallback("listMarketEvents fallback", error, {
+      endpoint: "/api/markets/[marketId]/events",
+      marketId,
+    })
     return getFixtureMarketEvents(marketId)
   }
 })
@@ -165,7 +185,10 @@ export const getDashboardSnapshot = cache(async (): Promise<DashboardSnapshot> =
 
   try {
     return await fetchApi<DashboardSnapshot>("/api/dashboard")
-  } catch {
+  } catch (error) {
+    logRepositoryFallback("getDashboardSnapshot fallback", error, {
+      endpoint: "/api/dashboard",
+    })
     const markets = getMockMarkets()
     return buildDashboardSnapshot(markets, getFixtureMarketEvents)
   }
