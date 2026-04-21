@@ -14,7 +14,7 @@ export interface TopicMarket {
   currentMovementPercent: number
   currentDirection: MovementDirection
   eventCount: number
-  lastEventAt?: string
+  lastEventAt: string | null
 }
 
 export interface TopicUpdate {
@@ -28,7 +28,7 @@ export interface TopicUpdate {
   endTime: string
   movementPercent: number
   direction: MovementDirection
-  summary?: string
+  summary: string | null
   signals: Signal[]
   entities: Entity[]
 }
@@ -45,7 +45,7 @@ export interface TopicSummary {
   signalCount: number
   strongestMovementPercent: number
   strongestMovementDirection: MovementDirection
-  latestUpdateAt?: string
+  latestUpdateAt: string | null
 }
 
 export interface TopicState extends TopicSummary {
