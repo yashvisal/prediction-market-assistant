@@ -394,7 +394,7 @@ Your product direction clearly wants external evidence, but the current live pat
 To build this out fast, V1 should use a staged approach:
 
 - phase 1: Prediction Hunt signals, provider context, matching markets, and movement windows
-- phase 2: lightweight external source attachment for only the top ranked digest topics
+- phase 2: lightweight external source attachment for only the top-ranked digest topics
 - phase 3: richer retrieval, topic timelines, and better explanation quality
 
 This avoids spending the whole pivot on broad retrieval infrastructure before the topic model is proven.
