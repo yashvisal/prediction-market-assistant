@@ -194,13 +194,6 @@ def _searchable_text(market: MarketDetail, events: list[MarketEvent]) -> str:
         )
     return " ".join(bits).lower()
 
-
-def _build_topic_detail(
-    seed: TopicSeed, members: list[tuple[MarketDetail, list[MarketEvent]]]
-) -> TopicDetail:
-    return TopicDetail.model_validate(_build_topic_state_entry(seed, members).model_dump())
-
-
 def _build_topic_state_entry(
     seed: TopicSeed, members: list[tuple[MarketDetail, list[MarketEvent]]]
 ) -> TopicState:
