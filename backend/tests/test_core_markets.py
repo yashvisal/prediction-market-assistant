@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -25,6 +27,7 @@ def _raw_market() -> PredictionHuntMarketSummary:
         title="Will the Fed cut rates by September?",
         category="politics",
         status="active",
+        createdAt="2026-01-15T12:30:00Z",
         expirationDate="2026-09-18T00:00:00Z",
         sourceUrl="https://example.com/markets/poly-fed-cut",
         price=PredictionHuntPriceSnapshot(
@@ -73,7 +76,18 @@ def test_prediction_hunt_market_maps_into_core_contract():
     assert market.category == MarketCategory.POLITICS
     assert market.currentProbability == 0.57
     assert market.previousClose == 0.57
+    assert market.createdAt == "2026-01-15T12:30:00Z"
+    assert market.closesAt == "2026-09-18T00:00:00Z"
     assert "Prediction Hunt market" in market.description
+
+
+def test_prediction_hunt_market_created_at_falls_back_to_current_utc_when_missing():
+    raw = _raw_market().model_copy(update={"createdAt": None, "creationDate": None})
+
+    market = _map_prediction_hunt_market(raw)
+
+    assert market.createdAt != market.closesAt
+    assert datetime.fromisoformat(market.createdAt.replace("Z", "+00:00")).tzinfo == UTC
 
 
 def test_recent_move_event_is_built_from_prediction_hunt_history():

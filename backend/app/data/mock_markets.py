@@ -1,15 +1,17 @@
-from app.models.market import (
+from app.models.intelligence import (
     Entity,
     EntityType,
-    MarketCategory,
-    MarketDetail,
-    MarketEvent,
-    MarketStatus,
     MovementDirection,
     RelatedEvent,
     RelationshipType,
     Signal,
     SignalSourceType,
+)
+from app.models.market import (
+    MarketCategory,
+    MarketDetail,
+    MarketEvent,
+    MarketStatus,
 )
 
 

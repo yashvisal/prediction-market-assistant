@@ -38,10 +38,10 @@ export default function AppError({
           Try Again
         </Button>
         <Link
-          href="/markets"
+          href="/feed"
           className={cn(buttonVariants({ variant: "ghost" }), "text-muted-foreground")}
         >
-          Back to Markets
+          Back to Feed
         </Link>
       </div>
     </div>

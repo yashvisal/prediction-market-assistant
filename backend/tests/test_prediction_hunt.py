@@ -33,27 +33,35 @@ def test_prediction_hunt_event_summary_parses_groups():
 
 
 def test_prediction_hunt_market_history_and_matching_parsing():
-    market = _to_market_summary(
-        {
-            "id": 44,
-            "market_id": "poly-btc-100k",
-            "platform": "polymarket",
-            "title": "Will Bitcoin hit $100k this year?",
-            "category": "economics",
-            "status": "active",
-            "expiration_date": "2026-12-31T23:59:59Z",
-            "source_url": "https://example.com/market",
-            "price": {
-                "yes_bid": 0.47,
-                "yes_ask": 0.49,
-                "no_bid": 0.51,
-                "no_ask": 0.53,
-                "last_price": 0.48,
-                "volume": 120340,
-                "liquidity": 8200.5,
-            },
-        }
-    )
+    base_market_payload = {
+        "id": 44,
+        "market_id": "poly-btc-100k",
+        "platform": "polymarket",
+        "title": "Will Bitcoin hit $100k this year?",
+        "category": "economics",
+        "status": "active",
+        "expiration_date": "2026-12-31T23:59:59Z",
+        "source_url": "https://example.com/market",
+        "price": {
+            "yes_bid": 0.47,
+            "yes_ask": 0.49,
+            "no_bid": 0.51,
+            "no_ask": 0.53,
+            "last_price": 0.48,
+            "volume": 120340,
+            "liquidity": 8200.5,
+        },
+    }
+    markets = [
+        _to_market_summary(
+            {
+                **base_market_payload,
+                timestamp_key: "2026-01-10T08:45:00Z",
+            }
+        )
+        for timestamp_key in ("created_at", "createdAt", "creation_date", "creationDate")
+    ]
+    market = markets[0]
     candle = _to_candle(
         {
             "timestamp": "2026-04-12T10:00:00Z",
@@ -93,6 +101,8 @@ def test_prediction_hunt_market_history_and_matching_parsing():
     )
 
     assert market.marketId == "poly-btc-100k"
+    for parsed_market in markets:
+        assert parsed_market.createdAt == "2026-01-10T08:45:00Z"
     assert market.price.lastPrice == 0.48
     assert candle.close == 0.48
     assert candle.dollarVolume == 864.0

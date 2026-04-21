@@ -53,6 +53,8 @@ class PredictionHuntMarketSummary(BaseModel):
     title: str
     category: str | None = None
     status: str
+    createdAt: str | None = None
+    creationDate: str | None = None
     expirationDate: str | None = None
     sourceUrl: str | None = None
     price: PredictionHuntPriceSnapshot

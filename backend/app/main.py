@@ -11,8 +11,8 @@ def parse_cors_origins() -> list[str]:
 
 
 app = FastAPI(
-    title="Prediction Market Assistant API",
-    description="Minimal Phase 3 backend contract for market and event data.",
+    title="World Signal Feed API",
+    description="Topic-centric intelligence API built on top of Prediction Hunt signal inputs.",
     version="0.1.0",
 )
 

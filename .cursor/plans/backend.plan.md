@@ -20,6 +20,12 @@ todos:
 isProject: false
 ---
 
+# Superseded Product Assumptions
+
+This plan still contains useful notes about Prediction Hunt plumbing and backend service boundaries, but its market-first product assumptions are no longer canonical.
+
+The active direction is now topic-centric and lives in [pivot.plan.md](pivot.plan.md).
+
 # Backend Build Plan
 
 ## Current Assessment
